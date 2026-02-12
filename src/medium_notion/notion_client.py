@@ -13,6 +13,64 @@ from . import logger as log
 # Notion ブロックの最大文字数（API 制限）
 MAX_BLOCK_TEXT_LENGTH = 2000
 
+# Notion API がサポートするコードブロック言語
+NOTION_CODE_LANGUAGES = {
+    "abap", "abc", "agda", "arduino", "ascii art", "assembly",
+    "bash", "basic", "bnf", "c", "c#", "c++", "clojure",
+    "coffeescript", "coq", "css", "dart", "dhall", "diff",
+    "docker", "ebnf", "elixir", "elm", "erlang", "f#", "flow",
+    "fortran", "gherkin", "glsl", "go", "graphql", "groovy",
+    "haskell", "hcl", "html", "idris", "java", "javascript",
+    "json", "julia", "kotlin", "latex", "less", "lisp",
+    "livescript", "llvm ir", "lua", "makefile", "markdown",
+    "markup", "matlab", "mathematica", "mermaid", "nix",
+    "notion formula", "objective-c", "ocaml", "pascal", "perl",
+    "php", "plain text", "powershell", "prolog", "protobuf",
+    "purescript", "python", "r", "racket", "reason", "ruby",
+    "rust", "sass", "scala", "scheme", "scss", "shell",
+    "smalltalk", "solidity", "sql", "swift", "toml", "typescript",
+    "vb.net", "verilog", "vhdl", "visual basic", "webassembly",
+    "xml", "yaml", "java/c/c++/c#",
+}
+
+# よくある言語名の別名マッピング
+_LANGUAGE_ALIASES = {
+    "js": "javascript",
+    "ts": "typescript",
+    "py": "python",
+    "rb": "ruby",
+    "sh": "shell",
+    "yml": "yaml",
+    "dockerfile": "docker",
+    "objectivec": "objective-c",
+    "objective c": "objective-c",
+    "cplusplus": "c++",
+    "csharp": "c#",
+    "fsharp": "f#",
+    "golang": "go",
+    "tex": "latex",
+    "text": "plain text",
+    "txt": "plain text",
+    "": "plain text",
+}
+
+
+def _normalize_code_language(language: str) -> str:
+    """コード言語名を Notion がサポートする名前に正規化する"""
+    lang = language.strip().lower()
+    # 完全一致
+    if lang in NOTION_CODE_LANGUAGES:
+        return lang
+    # 別名マッピング
+    if lang in _LANGUAGE_ALIASES:
+        return _LANGUAGE_ALIASES[lang]
+    # 部分一致（例: "python3" → "python"）
+    for supported in NOTION_CODE_LANGUAGES:
+        if lang.startswith(supported) or supported.startswith(lang):
+            return supported
+    # マッチしない場合は plain text にフォールバック
+    return "plain text"
+
 
 class NotionClient:
     """Notion API を使ってデータベースにページを作成するクライアント"""
@@ -201,6 +259,7 @@ class NotionClient:
                     code_content = code_content[lang_end + 1:]
                 else:
                     language = "plain text"
+                language = _normalize_code_language(language)
                 for chunk in self._split_text(code_content, MAX_BLOCK_TEXT_LENGTH):
                     blocks.append(self._code_block(chunk, language))
             elif para.startswith("> "):
