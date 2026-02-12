@@ -679,6 +679,8 @@ async def _bookmark_run(
     skipped: list[tuple[str, str]] = []
     failures: list[tuple[str, str]] = []
     newly_processed: list[str] = []
+    # Slack 通知用: (medium_url, japanese_title, notion_url)
+    processed_pages: list[tuple[str, str, str]] = []
 
     try:
         await browser.initialize()
@@ -767,6 +769,7 @@ async def _bookmark_run(
 
                     successes.append((url, result.japanese_title))
                     newly_processed.append(url)
+                    processed_pages.append((url, result.japanese_title, page.url))
                     console.print(
                         f"  [green]✓ {result.japanese_title}[/green]"
                     )
@@ -830,6 +833,15 @@ async def _bookmark_run(
     # ── 最終サマリー ──
     if new_urls:
         _show_batch_result(successes, skipped, failures)
+
+    # ── Slack 通知 ──
+    if config.slack_webhook_url and (processed_pages or failures):
+        from .slack import notify_slack
+        await notify_slack(
+            webhook_url=config.slack_webhook_url,
+            successes=processed_pages,
+            failures=failures,
+        )
 
 
 def _show_batch_result(

@@ -80,6 +80,7 @@ medium-notion-translator/
 │       ├── notion_client.py    # Notion ページ作成（Notion API）
 │       ├── config.py           # 設定管理（Pydantic + dotenv）
 │       ├── models.py           # データモデル定義
+│       ├── slack.py            # Slack 通知（Incoming Webhook）
 │       └── logger.py           # ロガー（loguru）
 └── tests/
 ```
@@ -153,6 +154,9 @@ medium-notion-translator/
 5. **Phase 3: リスト削除** — 処理済み（既存 + 今回翻訳分）をリストから削除
    - `browser.remove_articles_from_list()` で一括削除
 6. ブラウザ終了 → インデックス保存 → 最終サマリー表示
+7. **Slack 通知**（`SLACK_WEBHOOK_URL` 設定時のみ）
+   - 翻訳した記事のサマリーと Notion ページ URL を Incoming Webhook で送信
+   - 送信失敗時はログ出力のみ（メインフローに影響しない）
 
 出力ファイル形式（`batch -f` にそのまま渡せる）:
 ```text
@@ -405,6 +409,7 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 | `HEADLESS` | × | ブラウザを非表示で実行 | `false` |
 | `LOG_LEVEL` | × | ログレベル | `INFO` |
 | `CLAUDE_MODEL` | × | Claude のモデル名 | `sonnet` |
+| `SLACK_WEBHOOK_URL` | × | Slack Incoming Webhook URL（--run 完了時に通知） | - |
 
 **自動生成ファイル**:
 - `session_path`: `medium-session.json`（Playwright セッション）

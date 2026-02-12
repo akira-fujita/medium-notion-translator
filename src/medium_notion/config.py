@@ -18,6 +18,7 @@ class Config(BaseModel):
     claude_model: str = "sonnet"
     session_path: Path = Path("medium-session.json")
     index_path: Path = Path("article-index.json")
+    slack_webhook_url: str | None = None
 
     @field_validator("notion_api_key")
     @classmethod
@@ -68,4 +69,5 @@ def load_config(env_path: str | None = None) -> Config:
         headless=os.getenv("HEADLESS", "false").lower() == "true",
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         claude_model=os.getenv("CLAUDE_MODEL", "sonnet"),
+        slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
     )

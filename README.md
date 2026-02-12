@@ -131,6 +131,17 @@ medium-notion bookmark
 `--clean` を付けると、Notion DB に登録済みの記事を Medium のリストから自動削除します。
 リストを常にクリーンに保ちたい場合に便利です。
 
+### Slack 通知
+
+`--run` の完了後に翻訳結果を Slack に通知できます。`.env` に Webhook URL を設定するだけで有効になります。
+
+```env
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+```
+
+Slack Incoming Webhook は https://api.slack.com/messaging/webhooks で作成できます。
+未設定の場合、通知はスキップされます（他の機能に影響しません）。
+
 ### その他のコマンド
 
 ```bash
@@ -186,6 +197,7 @@ NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 HEADLESS=false
 LOG_LEVEL=INFO
 CLAUDE_MODEL=sonnet
+# SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 ```
 
 ## 仕様書
