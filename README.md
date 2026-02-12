@@ -99,7 +99,17 @@ https://medium.com/@user/article-2-def456
 ### ブックマークから一括翻訳
 
 Medium のリスト（ブックマーク）に保存した記事を一括翻訳できます。
-カスタムリストを指定する場合は `-l` オプションを使います。
+`--run` を使えば、URL エクスポート → 翻訳 → リスト削除を1コマンドで実行できます。
+
+```bash
+# ワンコマンドで全自動（エクスポート→翻訳→リスト削除）
+medium-notion bookmark -l toNotion --run --gui
+
+# スコア付き・インターバル60秒
+medium-notion bookmark -l toNotion --run -s 8 -i 60
+```
+
+ステップを分けて実行する場合:
 
 ```bash
 # 1. カスタムリスト「toNotion」の URL をエクスポート
@@ -107,6 +117,9 @@ medium-notion bookmark -l toNotion
 
 # 2. エクスポートした URL リストを一括翻訳
 medium-notion batch -f bookmarks.txt
+
+# 3. 翻訳済み記事をリストから自動削除
+medium-notion bookmark -l toNotion --clean
 ```
 
 デフォルトの Reading list を使う場合は `-l` 不要です。
@@ -114,6 +127,9 @@ medium-notion batch -f bookmarks.txt
 ```bash
 medium-notion bookmark
 ```
+
+`--clean` を付けると、Notion DB に登録済みの記事を Medium のリストから自動削除します。
+リストを常にクリーンに保ちたい場合に便利です。
 
 ### その他のコマンド
 

@@ -98,7 +98,7 @@ medium-notion-translator/
 |---------|------|--------------|
 | `translate` | 記事を翻訳して Notion に追加 | `-u URL`（必須）, `-s SCORE`（1-10）, `--headless/--gui` |
 | `batch` | URL リストから一括翻訳 | `-f FILE`（必須）, `-s SCORE`, `-i INTERVAL`（デフォルト30秒）, `--headless/--gui` |
-| `bookmark` | リストの URL をファイルに出力 | `-l LIST_NAME`（デフォルト `Reading list`）, `-o OUTPUT`（デフォルト `bookmarks.txt`）, `--headless/--gui` |
+| `bookmark` | リストの URL をファイルに出力 | `-l LIST_NAME`（デフォルト `Reading list`）, `-o OUTPUT`（デフォルト `bookmarks.txt`）, `--clean`（処理済み記事をリストから削除）, `--run`（エクスポート→翻訳→削除を一括実行）, `-s SCORE`（--run 時のスコア）, `-i INTERVAL`（--run 時の待機秒、デフォルト30）, `--headless/--gui` |
 | `login` | Medium にブラウザでログイン | なし（常に GUI モード） |
 | `index` | Notion DB から記事インデックスを構築 | なし |
 | `setup` | 対話型セットアップウィザード | なし |
@@ -126,17 +126,33 @@ medium-notion-translator/
 
 **bookmark コマンドの処理フロー**:
 1. 設定読み込み（1回）
-2. ブラウザ初期化
-3. リストページへの遷移:
+2. 既存記事と照合（ローカルインデックス + Notion DB）
+3. ブラウザ初期化
+4. リストページへの遷移:
    - `Reading list` の場合: `/me/list/reading-list` に直接アクセス
    - カスタムリストの場合: `/me/lists`（ライブラリ）にアクセス → リスト名を検索 → クリックして遷移
-4. `browser.fetch_reading_list()` で URL 一覧取得
+5. `browser.fetch_reading_list()` で URL 一覧取得
    - 無限スクロールで全記事を読み込み
    - JavaScript で DOM から記事 URL パターンにマッチするリンクを抽出
    - フォールバック: 厳密パターンで0件 → 緩い条件で再試行
-5. 既存インデックスと照合（処理済み記事のマーキング用）
 6. テキストファイルに出力（未処理 URL は通常行、処理済みは `#` コメントアウト）
 7. 結果サマリー表示
+8. `--clean` オプション指定時: 処理済み記事をリストから自動削除
+   - `browser.remove_articles_from_list()` で記事カードのブックマークボタン → リストピッカーでチェック解除
+   - 記事ごとにリストページを再読み込みして DOM を最新化
+   - 成功・失敗件数を表示
+
+**`--run` オプション指定時の処理フロー**（エクスポート→翻訳→削除を一括実行）:
+1. 設定読み込み（1回） → Claude CLI 確認 → Notion 接続確認 + 既存 URL 取得
+2. ブラウザ初期化（1回 — 全フェーズで共有）
+3. **Phase 1: エクスポート** — 通常の bookmark と同じ URL 取得・ファイル出力
+4. **Phase 2: 翻訳** — 未処理 URL を batch と同じロジックで翻訳 → Notion 登録
+   - `browser.fetch_article()` → `translator.translate_article()` → `notion.create_page()`
+   - 記事間に `--interval` 秒の待機
+   - 翻訳失敗した記事はリストに残る（削除しない）
+5. **Phase 3: リスト削除** — 処理済み（既存 + 今回翻訳分）をリストから削除
+   - `browser.remove_articles_from_list()` で一括削除
+6. ブラウザ終了 → インデックス保存 → 最終サマリー表示
 
 出力ファイル形式（`batch -f` にそのまま渡せる）:
 ```text
@@ -207,6 +223,23 @@ https://medium.com/@user/article-2-def456
 - ライブラリページの DOM 内で `h2`, `h3`, `a` 等のテキストからリスト名を検索
 - 見つかったらクリック可能な親要素（`<a>` タグ等）を探して遷移
 - 見つからない場合は利用可能なリスト名をエラーメッセージに含めて表示
+
+**リスト記事削除** (`remove_articles_from_list(list_name, urls_to_remove)`):
+- 記事ごとにリストページへ再遷移（`_navigate_to_list_page`）して DOM を最新化
+- 無限スクロール（`_scroll_to_load_all`）で全記事を読み込み
+- 指定 URL ごとに `_remove_single_article()` を実行
+- 戻り値: `(成功した URL リスト, 失敗した URL リスト)`
+
+**単一記事削除** (`_remove_single_article(url)`):
+ブックマークボタン方式で記事をリストから削除する。
+1. URL のパス部分で DOM 内の `<a>` リンクを照合
+2. マッチしたリンクの親コンテナを遡り、記事カードを特定
+3. カードをビューポート中央にスクロール（`scrollIntoView`）
+4. カード内のブックマークボタンを検出（`aria-label` に "bookmark" / "save" / "list" を含む `<button>`）
+5. ブックマークボタンを座標クリック → リストピッカーポップアップが開く
+6. ピッカー内のオーバーレイからリスト名（例: "toNotion"）を含む行を検出してクリック（チェック解除）
+7. Escape キーでピッカーを閉じる
+8. ボタンやリスト名が見つからない場合はデバッグ情報をログ出力して失敗扱い
 
 **404 検出ロジック**:
 - `document.title === 'Medium'`
@@ -612,6 +645,9 @@ cat bookmarks.txt
 
 # そのまま一括翻訳に渡す
 medium-notion batch -f bookmarks.txt
+
+# 翻訳済み記事をリストから自動削除（リストをクリーンに保つ）
+medium-notion bookmark -l toNotion --clean
 ```
 
 ### 9.5 メンテナンス

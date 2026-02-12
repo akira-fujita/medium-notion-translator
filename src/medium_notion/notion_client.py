@@ -146,6 +146,47 @@ class NotionClient:
 
         return articles
 
+    def list_existing_urls(self) -> set[str]:
+        """DB 内の既存記事の URL 一覧を取得（重複チェック用）"""
+        import httpx
+
+        urls: set[str] = set()
+        api_url = "https://api.notion.com/v1/databases/{}/query".format(
+            self.database_id
+        )
+        headers = {
+            "Authorization": f"Bearer {self.config.notion_api_key}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            has_more = True
+            start_cursor = None
+            while has_more:
+                body: dict = {"page_size": 100}
+                if start_cursor:
+                    body["start_cursor"] = start_cursor
+
+                resp = httpx.post(api_url, headers=headers, json=body, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+
+                for page in data.get("results", []):
+                    props = page.get("properties", {})
+                    url_val = props.get("URL", {}).get("url")
+                    if url_val:
+                        urls.add(url_val)
+
+                has_more = data.get("has_more", False)
+                start_cursor = data.get("next_cursor")
+
+            log.step(f"Notion DB に登録済みの URL: {len(urls)} 件")
+        except Exception as e:
+            log.warn(f"Notion DB の URL 取得に失敗: {e}")
+
+        return urls
+
     def create_page(
         self,
         result: TranslationResult,
@@ -160,15 +201,34 @@ class NotionClient:
         # 本文ブロックの構築
         children = self._build_content_blocks(result)
 
+        # Notion API は 1 リクエストあたり最大 100 ブロック
+        MAX_BLOCKS_PER_REQUEST = 100
+
         try:
+            # 最初の 100 ブロックでページを作成
+            first_batch = children[:MAX_BLOCKS_PER_REQUEST]
             response = self.client.pages.create(
                 parent={"database_id": self.database_id},
                 properties=properties,
-                children=children,
+                children=first_batch,
             )
 
             page_id = response["id"]
             page_url = response.get("url", "")
+
+            # 残りのブロックを 100 件ずつ追記
+            remaining = children[MAX_BLOCKS_PER_REQUEST:]
+            if remaining:
+                log.step(
+                    f"ブロック数 {len(children)} → "
+                    f"{len(remaining)} ブロックを追記中..."
+                )
+            for i in range(0, len(remaining), MAX_BLOCKS_PER_REQUEST):
+                chunk = remaining[i : i + MAX_BLOCKS_PER_REQUEST]
+                self.client.blocks.children.append(
+                    block_id=page_id,
+                    children=chunk,
+                )
 
             log.success(f"Notion ページ作成完了: {page_url}")
 

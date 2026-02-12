@@ -66,8 +66,9 @@ def cli():
 
     \b
     ■ ブックマークから一括翻訳:
-      medium-notion bookmark -l toNotion       リスト「toNotion」の URL を出力
-      medium-notion batch -f bookmarks.txt      一括翻訳
+      medium-notion bookmark -l toNotion --run  リスト取得→翻訳→削除を一括実行
+      medium-notion bookmark -l toNotion        リスト「toNotion」の URL を出力
+      medium-notion batch -f bookmarks.txt      一括翻訳（ステップ分割で実行する場合）
 
     \b
     ■ 各コマンドの詳細:
@@ -145,6 +146,15 @@ async def _translate(url: str, score: int | None, headless: bool | None):
     notion = NotionClient(config)
     if not notion.check_access():
         sys.exit(1)
+
+    # 3.5 Notion DB に同じ URL が既に登録されていないかチェック
+    notion_urls = notion.list_existing_urls()
+    if url in notion_urls:
+        console.print(
+            f"\n[yellow]⚠ この URL は既に Notion DB に登録されています[/yellow]"
+        )
+        console.print(f"  → スキップします。再翻訳する場合は Notion のページを削除してから実行してください。")
+        return
 
     # 4. 記事取得
     browser = BrowserClient(config)
@@ -332,9 +342,12 @@ async def _batch_translate(
     if not notion.check_access():
         sys.exit(1)
 
-    # 5. 既存インデックス読み込み（処理済みスキップ用）
+    # 5. 既存記事チェック（処理済みスキップ用）
+    #    ローカルインデックス + Notion DB の URL を統合
     existing_articles = _load_article_index(config)
     existing_urls = {a.get("url") for a in existing_articles}
+    notion_urls = notion.list_existing_urls()
+    existing_urls |= notion_urls
 
     # 結果記録
     successes: list[tuple[str, str]] = []   # (url, title)
@@ -353,10 +366,11 @@ async def _batch_translate(
             console.print(f"\n[bold]── [{i}/{len(urls)}] ──[/bold]")
             console.print(f"  {url}")
 
-            # 処理済みチェック
+            # 処理済みチェック（ローカルインデックス or Notion DB）
             if url in existing_urls:
-                console.print("  [dim]⊘ スキップ（処理済み）[/dim]")
-                skipped.append((url, "処理済み"))
+                reason = "Notion DB に登録済み" if url in notion_urls else "処理済み"
+                console.print(f"  [dim]⊘ スキップ（{reason}）[/dim]")
+                skipped.append((url, reason))
                 continue
 
             try:
@@ -430,11 +444,48 @@ async def _batch_translate(
     default=None,
     help="ブラウザの表示モード",
 )
-def bookmark(list_name: str, output: str, headless: bool | None):
+@click.option(
+    "--clean",
+    is_flag=True,
+    default=False,
+    help="Notion DB に登録済みの記事をリストから自動削除する",
+)
+@click.option(
+    "--run",
+    is_flag=True,
+    default=False,
+    help="エクスポート→翻訳→リスト削除を一括実行",
+)
+@click.option(
+    "--score", "-s",
+    type=click.IntRange(1, 10),
+    default=None,
+    help="翻訳記事のスコア (1-10)。--run 時のみ有効",
+)
+@click.option(
+    "--interval", "-i",
+    type=int,
+    default=30,
+    show_default=True,
+    help="記事間の待機秒数。--run 時のみ有効",
+)
+def bookmark(
+    list_name: str,
+    output: str,
+    headless: bool | None,
+    clean: bool,
+    run: bool,
+    score: int | None,
+    interval: int,
+):
     """Medium のリスト（ブックマーク）から記事 URL を取得する。
 
     指定したリストに保存された記事の URL 一覧をテキストファイルに出力します。
     出力ファイルはそのまま batch コマンドに渡して一括翻訳できます。
+
+    --clean を付けると、Notion DB に登録済みの記事をリストから自動削除します。
+
+    --run を付けると、エクスポート→翻訳→リスト削除を一括で実行します。
 
     \b
     使い方:
@@ -443,19 +494,26 @@ def bookmark(list_name: str, output: str, headless: bool | None):
 
     \b
     例:
-      medium-notion bookmark                       デフォルト（Reading list）
-      medium-notion bookmark -l toNotion           カスタムリスト「toNotion」
-      medium-notion bookmark -l toNotion -o out.txt  出力先を変更
-      medium-notion bookmark --gui                 ブラウザを表示
+      medium-notion bookmark                              デフォルト（Reading list）
+      medium-notion bookmark -l toNotion                  カスタムリスト「toNotion」
+      medium-notion bookmark -l toNotion -o out.txt       出力先を変更
+      medium-notion bookmark -l toNotion --clean          処理済み記事をリストから削除
+      medium-notion bookmark -l toNotion --run --gui      エクスポート→翻訳→削除を一括実行
+      medium-notion bookmark -l toNotion --run -s 8       スコア付きで一括実行
+      medium-notion bookmark --gui                        ブラウザを表示
     """
-    asyncio.run(_bookmark(list_name, output, headless))
+    if run:
+        asyncio.run(_bookmark_run(list_name, output, headless, score, interval))
+    else:
+        asyncio.run(_bookmark(list_name, output, headless, clean))
 
 
-async def _bookmark(list_name: str, output: str, headless: bool | None):
+async def _bookmark(list_name: str, output: str, headless: bool | None, clean: bool):
     """ブックマーク URL 取得パイプライン"""
     console.print(
         Panel(
-            f"[bold]Medium「{list_name}」→ URL エクスポート[/bold]",
+            f"[bold]Medium「{list_name}」→ URL エクスポート[/bold]"
+            + ("\n[dim]--clean: 処理済み記事をリストから削除[/dim]" if clean else ""),
             style="blue",
         )
     )
@@ -473,61 +531,305 @@ async def _bookmark(list_name: str, output: str, headless: bool | None):
 
     log.setup_logger(config.log_level)
 
-    # 2. ブラウザ初期化・URL 取得
+    # 2. 既存記事と照合（ローカルインデックス + Notion DB）
+    existing_articles = _load_article_index(config)
+    existing_urls = {a.get("url") for a in existing_articles}
+    notion = NotionClient(config)
+    if notion.check_access():
+        existing_urls |= notion.list_existing_urls()
+
+    # 3. ブラウザ初期化・URL 取得（--clean の場合はブラウザを閉じずに保持）
     browser = BrowserClient(config)
     try:
         await browser.initialize()
         urls = await browser.fetch_reading_list(list_name=list_name)
+
+        if not urls:
+            console.print(f"\n[yellow]⚠ リスト「{list_name}」に記事が見つかりませんでした[/yellow]")
+            console.print("[dim]  リストが空か、DOM 構造の変更により取得できなかった可能性があります[/dim]")
+            console.print("[dim]  → --gui モードで再試行してみてください[/dim]")
+            return
+
+        # 4. URL を分類して出力ファイル生成
+        new_count = 0
+        processed_count = 0
+        processed_urls: list[str] = []
+        lines: list[str] = []
+
+        lines.append(f"# Medium「{list_name}」({date.today()} 取得, {len(urls)}件)")
+        lines.append("# 処理済みの記事は batch 実行時に自動スキップされます")
+        lines.append("")
+
+        for url in urls:
+            if url in existing_urls:
+                lines.append(f"# {url}  (処理済み)")
+                processed_count += 1
+                processed_urls.append(url)
+            else:
+                lines.append(url)
+                new_count += 1
+
+        # 5. ファイル出力
+        output_path = Path(output)
+        output_path.write_text("\n".join(lines) + "\n")
+
+        # 6. 結果表示
+        console.print()
+        console.print("[bold green]✓ URL リストを出力しました[/bold green]")
+        console.print()
+        console.print(f"  [bold]ファイル[/bold]    {output_path.absolute()}")
+        console.print(f"  [bold]合計[/bold]      {len(urls)} 件")
+        console.print(f"  [bold]未処理[/bold]    {new_count} 件")
+        console.print(f"  [bold]処理済み[/bold]  {processed_count} 件（コメントアウト済み）")
+        console.print()
+        if new_count > 0:
+            console.print(f"  → [bold]medium-notion batch -f {output}[/bold] で一括翻訳できます")
+        else:
+            console.print("  [dim]すべての記事が処理済みです[/dim]")
+        console.print()
+
+        # 7. --clean: 処理済み記事をリストから削除
+        if clean and processed_urls:
+            console.print(
+                Panel(
+                    f"[bold]リストから処理済み記事を削除中[/bold]\n"
+                    f"{len(processed_urls)} 件をリスト「{list_name}」から削除します",
+                    style="yellow",
+                )
+            )
+            succeeded, failed = await browser.remove_articles_from_list(
+                list_name=list_name,
+                urls_to_remove=processed_urls,
+            )
+            console.print()
+            if succeeded:
+                console.print(
+                    f"  [green]✓ {len(succeeded)} 件をリストから削除しました[/green]"
+                )
+            if failed:
+                console.print(
+                    f"  [red]✗ {len(failed)} 件の削除に失敗しました[/red]"
+                )
+                for url in failed:
+                    console.print(f"    - {_shorten_url(url)}")
+            console.print()
+        elif clean and not processed_urls:
+            console.print("[dim]  処理済みの記事はありません。削除対象なし[/dim]\n")
+
     except RuntimeError as e:
         console.print(f"\n[red]✗ エラー:[/red] {e}")
         sys.exit(1)
     finally:
         await browser.close()
 
-    if not urls:
-        console.print(f"\n[yellow]⚠ リスト「{list_name}」に記事が見つかりませんでした[/yellow]")
-        console.print("[dim]  リストが空か、DOM 構造の変更により取得できなかった可能性があります[/dim]")
-        console.print("[dim]  → --gui モードで再試行してみてください[/dim]")
-        return
 
-    # 3. 既存インデックスと照合
+async def _bookmark_run(
+    list_name: str,
+    output: str,
+    headless: bool | None,
+    score: int | None,
+    interval: int,
+):
+    """ブックマーク一括実行: エクスポート → 翻訳 → リスト削除"""
+    console.print(
+        Panel(
+            f"[bold]Medium「{list_name}」→ 一括処理[/bold]\n"
+            f"[dim]Phase 1: URL エクスポート → Phase 2: 翻訳 → Phase 3: リスト削除[/dim]",
+            style="blue",
+        )
+    )
+
+    # ── 初期設定 ──
+    try:
+        config = load_config()
+    except ValidationError as e:
+        console.print(f"[red]設定エラー:[/red] {e}")
+        console.print("[dim]→ `medium-notion setup` で設定してください[/dim]")
+        sys.exit(1)
+
+    if headless is not None:
+        config.headless = headless
+
+    log.setup_logger(config.log_level)
+
+    # Claude Code の確認（翻訳に必要）
+    if not Config.check_claude_code():
+        console.print(
+            "[red]Claude Code CLI が見つかりません[/red]\n"
+            "  → npm install -g @anthropic-ai/claude-code\n"
+            "  → Max プランでログイン: claude login"
+        )
+        sys.exit(1)
+
+    # Notion 接続確認 + 既存 URL 取得
+    notion = NotionClient(config)
+    if not notion.check_access():
+        sys.exit(1)
+
     existing_articles = _load_article_index(config)
     existing_urls = {a.get("url") for a in existing_articles}
+    existing_urls |= notion.list_existing_urls()
 
-    new_count = 0
-    processed_count = 0
-    lines: list[str] = []
+    # ── ブラウザ初期化（全フェーズで共有） ──
+    browser = BrowserClient(config)
+    translator = TranslationService(config)
 
-    lines.append(f"# Medium「{list_name}」({date.today()} 取得, {len(urls)}件)")
-    lines.append("# 処理済みの記事は batch 実行時に自動スキップされます")
-    lines.append("")
+    # 翻訳結果の記録
+    successes: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str]] = []
+    failures: list[tuple[str, str]] = []
+    newly_processed: list[str] = []
 
-    for url in urls:
-        if url in existing_urls:
-            lines.append(f"# {url}  (処理済み)")
-            processed_count += 1
+    try:
+        await browser.initialize()
+
+        # ═══════════════════════════════════
+        # Phase 1: URL エクスポート
+        # ═══════════════════════════════════
+        console.print(
+            Panel("[bold]Phase 1: URL エクスポート[/bold]", style="cyan")
+        )
+
+        urls = await browser.fetch_reading_list(list_name=list_name)
+
+        if not urls:
+            console.print(
+                f"\n[yellow]⚠ リスト「{list_name}」に記事が見つかりませんでした[/yellow]"
+            )
+            return
+
+        # URL を分類
+        new_urls: list[str] = []
+        processed_urls: list[str] = []
+        lines: list[str] = []
+
+        lines.append(f"# Medium「{list_name}」({date.today()} 取得, {len(urls)}件)")
+        lines.append("# 処理済みの記事は batch 実行時に自動スキップされます")
+        lines.append("")
+
+        for url in urls:
+            if url in existing_urls:
+                lines.append(f"# {url}  (処理済み)")
+                processed_urls.append(url)
+            else:
+                lines.append(url)
+                new_urls.append(url)
+
+        # ファイル出力
+        output_path = Path(output)
+        output_path.write_text("\n".join(lines) + "\n")
+
+        console.print()
+        console.print("[bold green]✓ URL リストを出力しました[/bold green]")
+        console.print(f"  [bold]合計[/bold] {len(urls)} 件（未処理: {len(new_urls)}, 処理済み: {len(processed_urls)}）")
+        console.print()
+
+        # ═══════════════════════════════════
+        # Phase 2: 翻訳（未処理 URL がある場合のみ）
+        # ═══════════════════════════════════
+        if new_urls:
+            console.print(
+                Panel(
+                    f"[bold]Phase 2: 翻訳[/bold]\n"
+                    f"{len(new_urls)} 件を翻訳します（インターバル: {interval}秒）",
+                    style="cyan",
+                )
+            )
+
+            for i, url in enumerate(new_urls, start=1):
+                console.print(f"\n[bold]── [{i}/{len(new_urls)}] ──[/bold]")
+                console.print(f"  {url}")
+
+                try:
+                    # 記事取得
+                    article = await browser.fetch_article(url)
+
+                    if article.is_preview_only:
+                        console.print(
+                            "  [yellow]⚠ ペイウォールによりプレビューのみ[/yellow]"
+                        )
+
+                    # 翻訳
+                    result = translator.translate_article(
+                        article, existing_articles=existing_articles
+                    )
+
+                    # Notion に追加
+                    page = notion.create_page(result, score=score)
+
+                    # インデックスにメモリ上で追加
+                    existing_articles.append({
+                        "title": result.japanese_title,
+                        "categories": result.categories,
+                        "url": url,
+                    })
+                    existing_urls.add(url)
+
+                    successes.append((url, result.japanese_title))
+                    newly_processed.append(url)
+                    console.print(
+                        f"  [green]✓ {result.japanese_title}[/green]"
+                    )
+
+                except (RuntimeError, Exception) as e:
+                    failures.append((url, str(e)))
+                    console.print(f"  [red]✗ エラー: {e}[/red]")
+
+                # インターバル（最後の記事以外）
+                if i < len(new_urls):
+                    console.print(
+                        f"  [dim]次の記事まで {interval} 秒待機...[/dim]"
+                    )
+                    await asyncio.sleep(interval)
         else:
-            lines.append(url)
-            new_count += 1
+            console.print("[dim]  すべての記事が処理済みです。翻訳をスキップします[/dim]\n")
 
-    # 4. ファイル出力
-    output_path = Path(output)
-    output_path.write_text("\n".join(lines) + "\n")
+        # インデックスをファイルに保存
+        if successes:
+            config.index_path.write_text(
+                json.dumps(existing_articles, ensure_ascii=False, indent=2)
+            )
 
-    # 5. 結果表示
-    console.print()
-    console.print("[bold green]✓ URL リストを出力しました[/bold green]")
-    console.print()
-    console.print(f"  [bold]ファイル[/bold]    {output_path.absolute()}")
-    console.print(f"  [bold]合計[/bold]      {len(urls)} 件")
-    console.print(f"  [bold]未処理[/bold]    {new_count} 件")
-    console.print(f"  [bold]処理済み[/bold]  {processed_count} 件（コメントアウト済み）")
-    console.print()
-    if new_count > 0:
-        console.print(f"  → [bold]medium-notion batch -f {output}[/bold] で一括翻訳できます")
-    else:
-        console.print("  [dim]すべての記事が処理済みです[/dim]")
-    console.print()
+        # ═══════════════════════════════════
+        # Phase 3: リスト削除
+        # ═══════════════════════════════════
+        urls_to_remove = processed_urls + newly_processed
+        if urls_to_remove:
+            console.print(
+                Panel(
+                    f"[bold]Phase 3: リスト削除[/bold]\n"
+                    f"{len(urls_to_remove)} 件をリスト「{list_name}」から削除します",
+                    style="cyan",
+                )
+            )
+            succeeded, failed = await browser.remove_articles_from_list(
+                list_name=list_name,
+                urls_to_remove=urls_to_remove,
+            )
+            console.print()
+            if succeeded:
+                console.print(
+                    f"  [green]✓ {len(succeeded)} 件をリストから削除しました[/green]"
+                )
+            if failed:
+                console.print(
+                    f"  [red]✗ {len(failed)} 件の削除に失敗しました[/red]"
+                )
+                for url in failed:
+                    console.print(f"    - {_shorten_url(url)}")
+            console.print()
+        else:
+            console.print("[dim]  削除対象の記事はありません[/dim]\n")
+
+    except RuntimeError as e:
+        console.print(f"\n[red]✗ エラー:[/red] {e}")
+        sys.exit(1)
+    finally:
+        await browser.close()
+
+    # ── 最終サマリー ──
+    if new_urls:
+        _show_batch_result(successes, skipped, failures)
 
 
 def _show_batch_result(

@@ -875,6 +875,341 @@ class BrowserClient:
         if "/list/" not in current_url and list_name.lower() not in current_url.lower():
             log.warn(f"リストページへの遷移に失敗した可能性があります（URL: {current_url}）")
 
+    async def remove_articles_from_list(
+        self,
+        list_name: str,
+        urls_to_remove: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Medium のリストから指定した記事を削除する
+
+        Args:
+            list_name: 対象リスト名
+            urls_to_remove: 削除する記事の URL リスト
+
+        Returns:
+            (成功した URL リスト, 失敗した URL リスト)
+        """
+        if not self._page:
+            raise RuntimeError("ブラウザが初期化されていません")
+
+        if not urls_to_remove:
+            return [], []
+
+        log.step(f"リスト「{list_name}」から {len(urls_to_remove)} 件の記事を削除中...")
+
+        # リスト名を保持（_remove_single_article で参照）
+        self._current_list_name = list_name
+
+        succeeded: list[str] = []
+        failed: list[str] = []
+
+        for i, url in enumerate(urls_to_remove):
+            # 毎回リストページに遷移して DOM を最新にする
+            # （前の記事の削除で DOM が変わるため）
+            await self._navigate_to_list_page(list_name)
+
+            # スクロールして全記事を読み込み
+            await self._scroll_to_load_all()
+            await self._page.evaluate("window.scrollTo(0, 0)")
+            await self._page.wait_for_timeout(1000)
+
+            try:
+                removed = await self._remove_single_article(url)
+                if removed:
+                    succeeded.append(url)
+                    log.step(f"  ✓ 削除: {url[:60]}...")
+                else:
+                    failed.append(url)
+                    log.warn(f"  ✗ 見つからず: {url[:60]}...")
+            except Exception as e:
+                failed.append(url)
+                log.warn(f"  ✗ 削除失敗: {url[:60]}... ({e})")
+
+            # 操作間のインターバル
+            if i < len(urls_to_remove) - 1:
+                await self._page.wait_for_timeout(1500)
+
+        log.success(
+            f"リスト削除完了: 成功 {len(succeeded)} 件, 失敗 {len(failed)} 件"
+        )
+        return succeeded, failed
+
+    async def _navigate_to_list_page(self, list_name: str) -> None:
+        """リストページに遷移する（共通処理）"""
+        if list_name.lower() == "reading list":
+            await self._page.goto(
+                "https://medium.com/me/list/reading-list",
+                wait_until="domcontentloaded",
+            )
+        else:
+            await self._page.goto(
+                "https://medium.com/me/lists",
+                wait_until="domcontentloaded",
+            )
+            try:
+                await self._page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await self._navigate_to_custom_list(list_name)
+
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+
+    async def _scroll_to_load_all(self) -> None:
+        """無限スクロールで全コンテンツを読み込む"""
+        prev_height = 0
+        for _ in range(50):
+            current_height = await self._page.evaluate("document.body.scrollHeight")
+            if current_height == prev_height:
+                break
+            prev_height = current_height
+            await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self._page.wait_for_timeout(1500)
+
+    async def _remove_single_article(self, url: str) -> bool:
+        """リストページから1件の記事を削除する
+
+        方式: ブックマークボタンをクリック → リストピッカーで対象リストのチェックを解除
+        """
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        url_path = parsed.path
+
+        # Step 1: 記事リンクを見つけてカードをスクロール表示
+        card_info = await self._page.evaluate("""
+            (urlPath) => {
+                const links = [...document.querySelectorAll('a[href]')];
+                for (const link of links) {
+                    try {
+                        const linkUrl = new URL(link.href);
+                        if (linkUrl.pathname !== urlPath) continue;
+
+                        // 記事カードのコンテナを見つける
+                        let card = link;
+                        for (let i = 0; i < 15; i++) {
+                            if (!card.parentElement) break;
+                            card = card.parentElement;
+                            const hasMultipleLinks = card.querySelectorAll('a[href]').length >= 2;
+                            const hasButton = card.querySelector('button');
+                            if (hasMultipleLinks && hasButton
+                                && card.offsetHeight > 80
+                                && card.offsetHeight < 600) {
+                                break;
+                            }
+                        }
+
+                        // カードをビューポート中央にスクロール
+                        card.scrollIntoView({ behavior: 'instant', block: 'center' });
+
+                        const rect = card.getBoundingClientRect();
+                        return {
+                            found: true,
+                            x: Math.round(rect.x + rect.width / 2),
+                            y: Math.round(rect.y + rect.height / 2),
+                        };
+                    } catch {}
+                }
+                return { found: false };
+            }
+        """, url_path)
+
+        if not card_info.get("found"):
+            log.warn("記事カードが見つかりません")
+            return False
+
+        # Step 2: ブックマークボタンを見つけてクリック
+        bookmark_btn = await self._page.evaluate("""
+            (urlPath) => {
+                const links = [...document.querySelectorAll('a[href]')];
+                for (const link of links) {
+                    try {
+                        const linkUrl = new URL(link.href);
+                        if (linkUrl.pathname !== urlPath) continue;
+
+                        let card = link;
+                        for (let i = 0; i < 15; i++) {
+                            if (!card.parentElement) break;
+                            card = card.parentElement;
+                            const hasMultipleLinks = card.querySelectorAll('a[href]').length >= 2;
+                            const hasButton = card.querySelector('button');
+                            if (hasMultipleLinks && hasButton
+                                && card.offsetHeight > 80
+                                && card.offsetHeight < 600) {
+                                break;
+                            }
+                        }
+
+                        const buttons = [...card.querySelectorAll('button')];
+                        for (const btn of buttons) {
+                            const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                            if (label.includes('bookmark') || label.includes('save')
+                                || label.includes('list')) {
+                                // 座標取得前にボタン自体もビューポート内に入れる
+                                btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                const rect = btn.getBoundingClientRect();
+                                return {
+                                    found: true,
+                                    x: Math.round(rect.x + rect.width / 2),
+                                    y: Math.round(rect.y + rect.height / 2),
+                                    label: label,
+                                };
+                            }
+                        }
+                        // aria-label なしでも SVG を含む小さいボタンを試す
+                        for (const btn of buttons) {
+                            const hasSvg = btn.querySelector('svg');
+                            const rect = btn.getBoundingClientRect();
+                            if (hasSvg && rect.width > 0 && rect.width < 60
+                                && rect.height > 0 && rect.height < 60) {
+                                btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                const r2 = btn.getBoundingClientRect();
+                                return {
+                                    found: true,
+                                    x: Math.round(r2.x + r2.width / 2),
+                                    y: Math.round(r2.y + r2.height / 2),
+                                    label: btn.getAttribute('aria-label') || '(svg-button)',
+                                };
+                            }
+                        }
+                        return { found: false, debug: buttons.map(b =>
+                            b.getAttribute('aria-label') || b.textContent?.trim()?.substring(0, 20) || '?'
+                        ) };
+                    } catch {}
+                }
+                return { found: false };
+            }
+        """, url_path)
+
+        if not bookmark_btn or not bookmark_btn.get("found"):
+            log.warn(f"ブックマークボタンが見つかりません: {bookmark_btn.get('debug', [])}")
+            return False
+
+        log.step(f"ブックマークボタンをクリック: {bookmark_btn.get('label', '')}")
+        await self._page.mouse.click(bookmark_btn["x"], bookmark_btn["y"])
+        await self._page.wait_for_timeout(2000)
+
+        # Step 3: リストピッカー内でチェック済みの対象リストをクリックしてトグル OFF
+        toggled = await self._page.evaluate("""
+            (listName) => {
+                const targetLower = listName.toLowerCase();
+
+                // ポップオーバー / オーバーレイを探す
+                const allEls = [...document.querySelectorAll('*')];
+                const overlays = allEls.filter(el => {
+                    const style = window.getComputedStyle(el);
+                    const zIndex = parseInt(style.zIndex) || 0;
+                    const pos = style.position;
+                    const rect = el.getBoundingClientRect();
+                    return (zIndex > 10 || pos === 'fixed' || pos === 'absolute')
+                        && rect.width > 100 && rect.width < 500
+                        && rect.height > 50 && rect.height < 600
+                        && rect.top >= 0 && rect.top < window.innerHeight;
+                });
+
+                for (const overlay of overlays) {
+                    const overlayText = (overlay.textContent || '').toLowerCase();
+                    if (!overlayText.includes(targetLower)) continue;
+
+                    // オーバーレイ内のすべての要素をフラットに取得
+                    const allChildren = [...overlay.querySelectorAll('*')];
+
+                    // 方法1: チェックボックスを探す
+                    for (const el of allChildren) {
+                        if (el.tagName.toLowerCase() === 'input'
+                            && el.type === 'checkbox') {
+                            const parent = el.closest('div, label, li');
+                            if (parent) {
+                                const pText = (parent.textContent || '').toLowerCase();
+                                if (pText.includes(targetLower)) {
+                                    el.click();
+                                    return { clicked: true, via: 'checkbox', text: pText.trim() };
+                                }
+                            }
+                        }
+                    }
+
+                    // 方法2: リスト名テキストに完全一致する要素の行をクリック
+                    for (const el of allChildren) {
+                        const text = (el.textContent || '').trim();
+                        const elLower = text.toLowerCase();
+                        if (elLower === targetLower || text === listName) {
+                            const row = el.closest('div, li, label')
+                                || el.parentElement;
+                            if (row) {
+                                row.click();
+                                return { clicked: true, via: 'text-row', text: text };
+                            }
+                            el.click();
+                            return { clicked: true, via: 'text-direct', text: text };
+                        }
+                    }
+
+                    // 方法3: リスト名で始まるリーフ要素をクリック
+                    for (const el of allChildren) {
+                        const text = (el.textContent || '').trim();
+                        const elLower = text.toLowerCase();
+                        if (elLower.startsWith(targetLower) && text.length < 30
+                            && el.children.length === 0) {
+                            const row = el.closest('div[role], li, label')
+                                || el.parentElement;
+                            if (row) {
+                                row.click();
+                                return { clicked: true, via: 'leaf-row', text: text };
+                            }
+                        }
+                    }
+
+                    // 方法4: "Locked" 等が付いたリスト名を含む要素を探す
+                    for (const el of allChildren) {
+                        const text = (el.textContent || '').trim();
+                        const elLower = text.toLowerCase();
+                        if (elLower.includes(targetLower) && text.length < 50) {
+                            // リスト行を見つける: クリック可能な親を探す
+                            const clickable = el.closest(
+                                'div[role="option"], div[role="button"], li, label'
+                            ) || el.closest('div');
+                            if (clickable && clickable.offsetHeight > 20
+                                && clickable.offsetHeight < 100) {
+                                clickable.click();
+                                return { clicked: true, via: 'contains-match', text: text };
+                            }
+                        }
+                    }
+
+                    // デバッグ: オーバーレイの中身を出力
+                    const debugTexts = allChildren
+                        .map(el => {
+                            const t = el.textContent?.trim();
+                            const tag = el.tagName?.toLowerCase();
+                            return t && t.length < 50 && t.length > 0
+                                ? tag + ':' + t : null;
+                        })
+                        .filter(Boolean);
+                    const unique = [...new Set(debugTexts)];
+                    return { clicked: false, debug: unique.slice(0, 20) };
+                }
+                return { clicked: false, debug: ['no overlay with list name found'] };
+            }
+        """, self._current_list_name)
+
+        if not toggled.get("clicked"):
+            await self._page.keyboard.press("Escape")
+            log.warn(
+                f"リストピッカーでのトグルに失敗。"
+                f"表示項目: {toggled.get('debug', [])}"
+            )
+            return False
+
+        log.step(f"リストのチェックを解除: {toggled.get('text', '')} (via {toggled.get('via', '')})")
+
+        # ピッカーを閉じる
+        await self._page.wait_for_timeout(800)
+        await self._page.keyboard.press("Escape")
+        await self._page.wait_for_timeout(1000)
+        return True
+
     async def close(self) -> None:
         """ブラウザを閉じる"""
         if self._browser:
