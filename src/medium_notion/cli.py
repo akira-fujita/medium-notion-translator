@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import click
 from pydantic import ValidationError
@@ -55,6 +56,12 @@ def cli():
       medium-notion translate -u <URL>            記事を翻訳して Notion に追加
       medium-notion translate -u <URL> -s 8       スコア付きで追加
       medium-notion translate -u <URL> --gui      ブラウザを表示して実行
+
+    \b
+    ■ 複数記事の一括翻訳:
+      medium-notion batch -f urls.txt             URL リストから一括翻訳
+      medium-notion batch -f urls.txt -s 7        全記事にスコアを付けて一括翻訳
+      medium-notion batch -f urls.txt -i 60       記事間のインターバルを60秒に設定
 
     \b
     ■ 各コマンドの詳細:
@@ -210,6 +217,231 @@ def _append_to_index(config: Config, result) -> None:
             json.dumps(articles, ensure_ascii=False, indent=2)
         )
         log.step(f"インデックス更新: {len(articles)} 件")
+
+
+@cli.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--file", "-f",
+    required=True,
+    type=click.Path(exists=True),
+    help="URL リストファイルのパス（1行1URL、# でコメント）",
+)
+@click.option(
+    "--score", "-s",
+    type=click.IntRange(1, 10),
+    default=None,
+    help="全記事に適用するスコア (1-10)",
+)
+@click.option(
+    "--interval", "-i",
+    type=int,
+    default=30,
+    show_default=True,
+    help="記事間の待機秒数（Medium のbot検出回避）",
+)
+@click.option(
+    "--headless/--gui",
+    default=None,
+    help="ブラウザの表示モード",
+)
+def batch(file: str, score: int | None, interval: int, headless: bool | None):
+    """URL リストファイルから複数記事を一括翻訳する。
+
+    テキストファイルに1行1URLを記載し、まとめて翻訳・Notion 登録します。
+    処理済みの記事（article-index.json に登録済み）は自動スキップされます。
+
+    \b
+    URL ファイルの形式:
+      # コメント行（# で始まる行は無視）
+      https://medium.com/@user/article-1-abc123
+      https://medium.com/@user/article-2-def456
+
+    \b
+    例:
+      medium-notion batch -f urls.txt
+      medium-notion batch -f urls.txt -s 8 -i 60
+      medium-notion batch -f urls.txt --gui
+    """
+    asyncio.run(_batch_translate(file, score, interval, headless))
+
+
+def _parse_url_file(file_path: str) -> list[str]:
+    """URL ファイルを読み込み、有効な URL のリストを返す"""
+    urls: list[str] = []
+    for line in Path(file_path).read_text().splitlines():
+        line = line.strip()
+        # 空行とコメント行をスキップ
+        if not line or line.startswith("#"):
+            continue
+        urls.append(line)
+    return urls
+
+
+async def _batch_translate(
+    file: str,
+    score: int | None,
+    interval: int,
+    headless: bool | None,
+):
+    """バッチ翻訳パイプラインの実行"""
+
+    # 1. URL ファイル読み込み
+    urls = _parse_url_file(file)
+    if not urls:
+        console.print("[yellow]⚠ URL ファイルに有効な URL がありません[/yellow]")
+        return
+
+    console.print(
+        Panel(
+            f"[bold]Medium → Notion バッチ翻訳[/bold]\n"
+            f"{len(urls)} 件の記事を処理します（インターバル: {interval}秒）",
+            style="blue",
+        )
+    )
+
+    # 2. 設定読み込み
+    try:
+        config = load_config()
+    except ValidationError as e:
+        console.print(f"[red]設定エラー:[/red] {e}")
+        console.print("[dim]→ `medium-notion setup` で設定してください[/dim]")
+        sys.exit(1)
+
+    if headless is not None:
+        config.headless = headless
+
+    log.setup_logger(config.log_level)
+
+    # 3. Claude Code の確認
+    if not Config.check_claude_code():
+        console.print(
+            "[red]Claude Code CLI が見つかりません[/red]\n"
+            "  → npm install -g @anthropic-ai/claude-code\n"
+            "  → Max プランでログイン: claude login"
+        )
+        sys.exit(1)
+
+    # 4. Notion 接続確認
+    notion = NotionClient(config)
+    if not notion.check_access():
+        sys.exit(1)
+
+    # 5. 既存インデックス読み込み（処理済みスキップ用）
+    existing_articles = _load_article_index(config)
+    existing_urls = {a.get("url") for a in existing_articles}
+
+    # 結果記録
+    successes: list[tuple[str, str]] = []   # (url, title)
+    skipped: list[tuple[str, str]] = []     # (url, reason)
+    failures: list[tuple[str, str]] = []    # (url, error)
+
+    # 6. ブラウザ初期化（1回だけ）
+    browser = BrowserClient(config)
+    translator = TranslationService(config)
+
+    try:
+        await browser.initialize()
+
+        # 7. 記事ごとのループ
+        for i, url in enumerate(urls, start=1):
+            console.print(f"\n[bold]── [{i}/{len(urls)}] ──[/bold]")
+            console.print(f"  {url}")
+
+            # 処理済みチェック
+            if url in existing_urls:
+                console.print("  [dim]⊘ スキップ（処理済み）[/dim]")
+                skipped.append((url, "処理済み"))
+                continue
+
+            try:
+                # 記事取得
+                article = await browser.fetch_article(url)
+
+                if article.is_preview_only:
+                    console.print(
+                        "  [yellow]⚠ ペイウォールによりプレビューのみ[/yellow]"
+                    )
+
+                # 翻訳
+                result = translator.translate_article(
+                    article, existing_articles=existing_articles
+                )
+
+                # Notion に追加
+                page = notion.create_page(result, score=score)
+
+                # インデックスにメモリ上で追加
+                existing_articles.append({
+                    "title": result.japanese_title,
+                    "categories": result.categories,
+                    "url": url,
+                })
+                existing_urls.add(url)
+
+                successes.append((url, result.japanese_title))
+                console.print(
+                    f"  [green]✓ {result.japanese_title}[/green]"
+                )
+
+            except (RuntimeError, Exception) as e:
+                failures.append((url, str(e)))
+                console.print(f"  [red]✗ エラー: {e}[/red]")
+
+            # インターバル（最後の記事以外）
+            if i < len(urls) and url not in {s[0] for s in skipped}:
+                console.print(f"  [dim]次の記事まで {interval} 秒待機...[/dim]")
+                await asyncio.sleep(interval)
+
+    finally:
+        await browser.close()
+
+    # 8. インデックスをファイルに一括保存
+    if successes:
+        config.index_path.write_text(
+            json.dumps(existing_articles, ensure_ascii=False, indent=2)
+        )
+
+    # 9. バッチ結果サマリー表示
+    _show_batch_result(successes, skipped, failures)
+
+
+def _show_batch_result(
+    successes: list[tuple[str, str]],
+    skipped: list[tuple[str, str]],
+    failures: list[tuple[str, str]],
+):
+    """バッチ処理の結果サマリーを表示"""
+    total = len(successes) + len(skipped) + len(failures)
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]バッチ処理結果[/bold]\n\n"
+            f"  [green]✓ 成功: {len(successes)}件[/green]\n"
+            f"  [dim]⊘ スキップ: {len(skipped)}件[/dim]\n"
+            f"  [red]✗ 失敗: {len(failures)}件[/red]\n\n"
+            f"  合計: {total}件",
+            style="blue",
+        )
+    )
+
+    # 詳細一覧
+    if successes:
+        for url, title in successes:
+            console.print(f"  [green]✓[/green] {_shorten_url(url)}  → 「{title}」")
+    if skipped:
+        for url, reason in skipped:
+            console.print(f"  [dim]⊘ {_shorten_url(url)}  （{reason}）[/dim]")
+    if failures:
+        for url, error in failures:
+            console.print(f"  [red]✗[/red] {_shorten_url(url)}  → {error[:80]}")
+    console.print()
+
+
+def _shorten_url(url: str, max_len: int = 60) -> str:
+    """URL を表示用に短縮"""
+    if len(url) <= max_len:
+        return url
+    return url[:max_len - 3] + "..."
 
 
 @cli.command(context_settings=CONTEXT_SETTINGS)

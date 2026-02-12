@@ -78,6 +78,24 @@ medium-notion translate -u '...' -s 8
 medium-notion translate -u '...' --gui
 ```
 
+### 複数記事の一括翻訳
+
+```bash
+# URL リストファイルから一括翻訳（処理済み記事は自動スキップ）
+medium-notion batch -f urls.txt
+
+# スコア付き・インターバル60秒
+medium-notion batch -f urls.txt -s 7 -i 60
+```
+
+URL ファイルの形式（1行1URL、`#` でコメント）:
+
+```text
+# 今週読みたい記事
+https://medium.com/@user/article-1-abc123
+https://medium.com/@user/article-2-def456
+```
+
 ### その他のコマンド
 
 ```bash

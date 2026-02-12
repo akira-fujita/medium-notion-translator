@@ -97,6 +97,7 @@ medium-notion-translator/
 | コマンド | 説明 | 主なオプション |
 |---------|------|--------------|
 | `translate` | 記事を翻訳して Notion に追加 | `-u URL`（必須）, `-s SCORE`（1-10）, `--headless/--gui` |
+| `batch` | URL リストから一括翻訳 | `-f FILE`（必須）, `-s SCORE`, `-i INTERVAL`（デフォルト30秒）, `--headless/--gui` |
 | `login` | Medium にブラウザでログイン | なし（常に GUI モード） |
 | `index` | Notion DB から記事インデックスを構築 | なし |
 | `setup` | 対話型セットアップウィザード | なし |
@@ -110,6 +111,17 @@ medium-notion-translator/
 
 **translate コマンドの処理フロー**:
 1. 設定読み込み → 2. Claude CLI 確認 → 3. Notion 接続確認 → 4. 記事取得 → 5. インデックス読み込み → 6. 翻訳 → 7. Notion 登録 → 8. インデックス更新 → 9. 結果表示
+
+**batch コマンドの処理フロー**:
+1. URL ファイル読み込み・パース（`#` コメント・空行を除外）
+2. 設定読み込み（1回） → 3. Claude CLI 確認（1回） → 4. Notion 接続確認（1回）
+5. 既存インデックス読み込み（1回）→ 処理済み URL を set 化
+6. ブラウザ初期化（1回 — 全記事で共有）
+7. 記事ごとのループ:
+   - 処理済みチェック → スキップ or 取得 → 翻訳 → Notion 登録 → メモリ上でインデックス追加
+   - エラー時はログに記録してスキップ、次の記事へ
+   - 最後の記事以外はインターバル待機（デフォルト30秒）
+8. ブラウザ終了 → インデックス一括保存 → バッチ結果サマリー表示
 
 **インデックス管理**:
 - `_load_article_index()`: `article-index.json` から既存記事一覧を読み込む
@@ -517,7 +529,7 @@ medium-notion test
 ### 9.2 日常の翻訳作業
 
 ```bash
-# 記事を翻訳して Notion に追加
+# 1記事を翻訳して Notion に追加
 medium-notion translate -u 'https://medium.com/@user/article-abc123'
 
 # スコア付き
@@ -527,7 +539,25 @@ medium-notion translate -u 'https://medium.com/@user/article-abc123' -s 8
 medium-notion translate -u 'https://medium.com/@user/article-abc123' --gui
 ```
 
-### 9.3 メンテナンス
+### 9.3 複数記事の一括翻訳
+
+```bash
+# URL リストファイルを作成
+cat > urls.txt << 'EOF'
+# 今週読みたい記事
+https://medium.com/@user/article-1-abc123
+https://medium.com/@user/article-2-def456
+https://medium.com/@user/article-3-ghi789
+EOF
+
+# 一括翻訳（処理済み記事は自動スキップ）
+medium-notion batch -f urls.txt
+
+# スコア付き・インターバル60秒
+medium-notion batch -f urls.txt -s 7 -i 60
+```
+
+### 9.4 メンテナンス
 
 ```bash
 # 記事インデックスを Notion DB から再構築
