@@ -1,0 +1,5 @@
+# Medium「toNotion」(2026-02-12 取得, 2件)
+# 処理済みの記事は batch 実行時に自動スキップされます
+
+https://medium.com/@jaydipkumarjha/7-open-source-tools-backend-developers-cant-ignore-in-2025-bb4ef1311f55
+https://medium.com/spillwave-solutions/build-agent-skills-faster-with-claude-code-2-1-release-6d821d5b8179

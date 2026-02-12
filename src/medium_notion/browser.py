@@ -584,6 +584,297 @@ class BrowserClient:
         except Exception as e:
             log.warn(f"セッション保存に失敗: {e}")
 
+    async def fetch_reading_list(self, list_name: str = "Reading list") -> list[str]:
+        """Medium のリストから記事 URL 一覧を取得
+
+        Args:
+            list_name: 取得対象のリスト名。
+                       "Reading list" の場合は直接 URL でアクセス。
+                       それ以外のカスタムリストの場合はライブラリページから探す。
+        """
+        if not self._page:
+            raise RuntimeError("ブラウザが初期化されていません")
+
+        # セッション必須チェック
+        if not self.session_path.exists():
+            raise RuntimeError(
+                "Medium のログインセッションがありません。\n"
+                "  → 先に `medium-notion login` を実行してログインしてください。"
+            )
+
+        log.step(f"Medium のリスト「{list_name}」を取得中...")
+
+        # リストページへの遷移
+        if list_name.lower() == "reading list":
+            # デフォルトの reading-list は直接 URL でアクセス
+            response = await self._page.goto(
+                "https://medium.com/me/list/reading-list",
+                wait_until="domcontentloaded",
+            )
+        else:
+            # カスタムリストはライブラリページから探す
+            response = await self._page.goto(
+                "https://medium.com/me/lists",
+                wait_until="domcontentloaded",
+            )
+
+        if response and response.status >= 400:
+            raise RuntimeError(
+                f"ページの取得に失敗しました (HTTP {response.status})。\n"
+                "  → ログインセッションが期限切れの可能性があります。\n"
+                "  → `medium-notion login` で再ログインしてください。"
+            )
+
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            log.warn("networkidle タイムアウト — 読み込み完了前に続行します")
+
+        # ページ検証: ログイン済みか
+        page_check = await self._page.evaluate("""
+            () => {
+                const url = window.location.href;
+                return {
+                    finalUrl: url,
+                    isLoginPage: url.includes('/signin') || url.includes('/login'),
+                };
+            }
+        """)
+
+        if page_check.get("isLoginPage"):
+            raise RuntimeError(
+                "ログインページにリダイレクトされました。セッションが期限切れです。\n"
+                "  → `medium-notion login` で再ログインしてください。"
+            )
+
+        # カスタムリストの場合: ライブラリページからリスト名を探してクリック
+        if list_name.lower() != "reading list":
+            await self._navigate_to_custom_list(list_name)
+
+        # 無限スクロールで全記事を読み込み
+        log.step("スクロールして全記事を読み込み中...")
+        prev_height = 0
+        scroll_attempts = 0
+        max_scroll_attempts = 50  # 安全弁
+
+        while scroll_attempts < max_scroll_attempts:
+            current_height = await self._page.evaluate(
+                "document.body.scrollHeight"
+            )
+            if current_height == prev_height:
+                break  # これ以上コンテンツがない
+            prev_height = current_height
+            await self._page.evaluate(
+                "window.scrollTo(0, document.body.scrollHeight)"
+            )
+            await self._page.wait_for_timeout(1500)
+            scroll_attempts += 1
+
+        if scroll_attempts > 0:
+            log.step(f"スクロール完了（{scroll_attempts} 回）")
+
+        # ページトップに戻る
+        await self._page.evaluate("window.scrollTo(0, 0)")
+
+        # JavaScript で DOM から記事 URL を抽出
+        urls = await self._page.evaluate("""
+            () => {
+                const links = [...document.querySelectorAll('a[href]')]
+                    .map(a => {
+                        try {
+                            const url = new URL(a.href);
+                            // クエリパラメータとフラグメントを除去
+                            return url.origin + url.pathname;
+                        } catch {
+                            return null;
+                        }
+                    })
+                    .filter(href => {
+                        if (!href) return false;
+                        try {
+                            const url = new URL(href);
+                            // Medium ドメインのみ
+                            if (url.hostname !== 'medium.com'
+                                && !url.hostname.endsWith('.medium.com')) return false;
+                            const path = url.pathname;
+                            // 明らかに記事でないパスを除外
+                            if (path === '/' || path === '/me' || path.startsWith('/me/')
+                                || path.startsWith('/m/') || path === '/new-story'
+                                || path.startsWith('/plans') || path.startsWith('/membership')
+                                || path.startsWith('/tag/') || path.startsWith('/search')
+                                || path.startsWith('/creators')
+                                || path.includes('/list/')
+                                || path.includes('/sitemap')
+                                || path.includes('/about')) return false;
+                            // /@user/article-slug-hash 形式
+                            if (/^\\/@[^/]+\\/[^/]+-[a-f0-9]{8,}/.test(path)) return true;
+                            // /publication/article-slug-hash 形式
+                            if (/^\\/[^@][^/]*\\/[^/]+-[a-f0-9]{8,}/.test(path)) return true;
+                            // /p/hash 形式（短縮URL）
+                            if (/^\\/p\\/[a-f0-9]+/.test(path)) return true;
+                            return false;
+                        } catch {
+                            return false;
+                        }
+                    });
+                return [...new Set(links)]; // 重複除去
+            }
+        """)
+
+        if not urls:
+            # フォールバック: より緩いフィルタリングで再試行
+            log.warn("厳密なパターンで記事が見つかりません。緩い条件で再試行します...")
+            urls = await self._page.evaluate("""
+                () => {
+                    const links = [...document.querySelectorAll('a[href]')]
+                        .map(a => {
+                            try {
+                                const url = new URL(a.href);
+                                return url.origin + url.pathname;
+                            } catch {
+                                return null;
+                            }
+                        })
+                        .filter(href => {
+                            if (!href) return false;
+                            try {
+                                const url = new URL(href);
+                                if (url.hostname !== 'medium.com'
+                                    && !url.hostname.endsWith('.medium.com')) return false;
+                                const path = url.pathname;
+                                // 短いパスや明らかなナビリンクを除外
+                                if (path === '/' || path.split('/').length < 3) return false;
+                                if (path.startsWith('/me/') || path.startsWith('/m/')
+                                    || path.startsWith('/tag/') || path.startsWith('/search')
+                                    || path.startsWith('/plans') || path.startsWith('/membership')
+                                    || path === '/new-story'
+                                    || path.includes('/list/')
+                                    || path.includes('/sitemap')
+                                    || path.includes('/about')) return false;
+                                return true;
+                            } catch {
+                                return false;
+                            }
+                        });
+                    return [...new Set(links)];
+                }
+            """)
+
+            if not urls:
+                # デバッグ情報を出力
+                debug_info = await self._page.evaluate("""
+                    () => {
+                        const allLinks = [...document.querySelectorAll('a[href]')]
+                            .map(a => a.href)
+                            .slice(0, 30);
+                        return {
+                            url: window.location.href,
+                            title: document.title,
+                            totalLinks: document.querySelectorAll('a[href]').length,
+                            sampleLinks: allLinks,
+                            bodyTextLen: document.body.textContent?.length || 0,
+                        };
+                    }
+                """)
+                log.warn(f"ページ情報: URL={debug_info.get('url')}")
+                log.warn(f"  title: {debug_info.get('title')}")
+                log.warn(f"  リンク総数: {debug_info.get('totalLinks')}")
+                log.warn(f"  サンプルリンク: {debug_info.get('sampleLinks', [])[:10]}")
+
+        log.success(f"リスト「{list_name}」から {len(urls)} 件の記事 URL を取得しました")
+        return urls
+
+    async def _navigate_to_custom_list(self, list_name: str) -> None:
+        """ライブラリページからカスタムリストを探してクリック遷移する"""
+        log.step(f"ライブラリからリスト「{list_name}」を検索中...")
+
+        # 方法1: ページ内の全 <a> タグから /list/ を含む href を探し、
+        #        その周辺テキストにリスト名が含まれるものを見つける
+        result = await self._page.evaluate("""
+            (targetName) => {
+                const targetLower = targetName.toLowerCase();
+
+                // 全リンクからリスト URL を収集
+                const listLinks = [...document.querySelectorAll('a[href]')]
+                    .filter(a => {
+                        const href = a.href || '';
+                        return href.includes('/list/');
+                    })
+                    .map(a => ({
+                        href: a.href,
+                        text: a.textContent?.trim() || '',
+                        // リスト名がリンク自体か、その親要素に含まれるか
+                        parentText: a.closest('div, section, article')?.textContent?.trim() || '',
+                    }));
+
+                // リスト名に完全一致するリンクを探す
+                for (const link of listLinks) {
+                    if (link.text === targetName
+                        || link.parentText.includes(targetName)) {
+                        // /list/reading-list は除外
+                        if (link.href.includes('/list/reading-list')) continue;
+                        return { found: true, href: link.href };
+                    }
+                }
+
+                // href にリスト名（小文字）を含むリンクを探す
+                for (const link of listLinks) {
+                    if (link.href.toLowerCase().includes(targetLower)) {
+                        return { found: true, href: link.href };
+                    }
+                }
+
+                // 利用可能なリスト名を収集（エラーメッセージ用）
+                const listNames = [];
+                const headings = document.querySelectorAll('h2, h3, h4');
+                headings.forEach(el => {
+                    const t = el.textContent?.trim();
+                    if (t && t.length > 0 && t.length < 100) listNames.push(t);
+                });
+                // リンクテキストからも収集
+                listLinks.forEach(link => {
+                    if (link.text && !listNames.includes(link.text)) {
+                        listNames.push(link.text);
+                    }
+                });
+
+                return {
+                    found: false,
+                    availableLists: listNames,
+                    debugLinks: listLinks.map(l => l.href).slice(0, 10),
+                };
+            }
+        """, list_name)
+
+        if not result.get("found"):
+            available = result.get("availableLists", [])
+            available_str = "、".join(f"「{n}」" for n in available) if available else "（不明）"
+            debug_links = result.get("debugLinks", [])
+            log.warn(f"検出された /list/ リンク: {debug_links}")
+            raise RuntimeError(
+                f"リスト「{list_name}」が見つかりません。\n"
+                f"  利用可能なリスト: {available_str}\n"
+                f"  → リスト名を確認して --list オプションで指定してください。"
+            )
+
+        # 見つかった URL に直接遷移
+        href = result["href"]
+        log.step(f"リスト「{list_name}」に遷移中: {href}")
+        await self._page.goto(href, wait_until="domcontentloaded")
+
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            log.warn("networkidle タイムアウト — 続行します")
+
+        # 遷移後の URL を確認
+        current_url = await self._page.evaluate("window.location.href")
+        log.step(f"遷移先: {current_url}")
+
+        # 遷移確認: /list/ を含む URL に遷移できたか
+        if "/list/" not in current_url and list_name.lower() not in current_url.lower():
+            log.warn(f"リストページへの遷移に失敗した可能性があります（URL: {current_url}）")
+
     async def close(self) -> None:
         """ブラウザを閉じる"""
         if self._browser:

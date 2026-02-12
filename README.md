@@ -96,6 +96,25 @@ https://medium.com/@user/article-1-abc123
 https://medium.com/@user/article-2-def456
 ```
 
+### ブックマークから一括翻訳
+
+Medium のリスト（ブックマーク）に保存した記事を一括翻訳できます。
+カスタムリストを指定する場合は `-l` オプションを使います。
+
+```bash
+# 1. カスタムリスト「toNotion」の URL をエクスポート
+medium-notion bookmark -l toNotion
+
+# 2. エクスポートした URL リストを一括翻訳
+medium-notion batch -f bookmarks.txt
+```
+
+デフォルトの Reading list を使う場合は `-l` 不要です。
+
+```bash
+medium-notion bookmark
+```
+
 ### その他のコマンド
 
 ```bash

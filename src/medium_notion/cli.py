@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import click
@@ -62,6 +63,11 @@ def cli():
       medium-notion batch -f urls.txt             URL リストから一括翻訳
       medium-notion batch -f urls.txt -s 7        全記事にスコアを付けて一括翻訳
       medium-notion batch -f urls.txt -i 60       記事間のインターバルを60秒に設定
+
+    \b
+    ■ ブックマークから一括翻訳:
+      medium-notion bookmark -l toNotion       リスト「toNotion」の URL を出力
+      medium-notion batch -f bookmarks.txt      一括翻訳
 
     \b
     ■ 各コマンドの詳細:
@@ -403,6 +409,125 @@ async def _batch_translate(
 
     # 9. バッチ結果サマリー表示
     _show_batch_result(successes, skipped, failures)
+
+
+@cli.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--list", "-l",
+    "list_name",
+    default="Reading list",
+    show_default=True,
+    help="取得対象のリスト名（カスタムリスト名を指定可能）",
+)
+@click.option(
+    "--output", "-o",
+    default="bookmarks.txt",
+    show_default=True,
+    help="URL 出力先ファイル",
+)
+@click.option(
+    "--headless/--gui",
+    default=None,
+    help="ブラウザの表示モード",
+)
+def bookmark(list_name: str, output: str, headless: bool | None):
+    """Medium のリスト（ブックマーク）から記事 URL を取得する。
+
+    指定したリストに保存された記事の URL 一覧をテキストファイルに出力します。
+    出力ファイルはそのまま batch コマンドに渡して一括翻訳できます。
+
+    \b
+    使い方:
+      1. medium-notion bookmark -l toNotion   → bookmarks.txt に出力
+      2. medium-notion batch -f bookmarks.txt → 一括翻訳
+
+    \b
+    例:
+      medium-notion bookmark                       デフォルト（Reading list）
+      medium-notion bookmark -l toNotion           カスタムリスト「toNotion」
+      medium-notion bookmark -l toNotion -o out.txt  出力先を変更
+      medium-notion bookmark --gui                 ブラウザを表示
+    """
+    asyncio.run(_bookmark(list_name, output, headless))
+
+
+async def _bookmark(list_name: str, output: str, headless: bool | None):
+    """ブックマーク URL 取得パイプライン"""
+    console.print(
+        Panel(
+            f"[bold]Medium「{list_name}」→ URL エクスポート[/bold]",
+            style="blue",
+        )
+    )
+
+    # 1. 設定読み込み
+    try:
+        config = load_config()
+    except ValidationError as e:
+        console.print(f"[red]設定エラー:[/red] {e}")
+        console.print("[dim]→ `medium-notion setup` で設定してください[/dim]")
+        sys.exit(1)
+
+    if headless is not None:
+        config.headless = headless
+
+    log.setup_logger(config.log_level)
+
+    # 2. ブラウザ初期化・URL 取得
+    browser = BrowserClient(config)
+    try:
+        await browser.initialize()
+        urls = await browser.fetch_reading_list(list_name=list_name)
+    except RuntimeError as e:
+        console.print(f"\n[red]✗ エラー:[/red] {e}")
+        sys.exit(1)
+    finally:
+        await browser.close()
+
+    if not urls:
+        console.print(f"\n[yellow]⚠ リスト「{list_name}」に記事が見つかりませんでした[/yellow]")
+        console.print("[dim]  リストが空か、DOM 構造の変更により取得できなかった可能性があります[/dim]")
+        console.print("[dim]  → --gui モードで再試行してみてください[/dim]")
+        return
+
+    # 3. 既存インデックスと照合
+    existing_articles = _load_article_index(config)
+    existing_urls = {a.get("url") for a in existing_articles}
+
+    new_count = 0
+    processed_count = 0
+    lines: list[str] = []
+
+    lines.append(f"# Medium「{list_name}」({date.today()} 取得, {len(urls)}件)")
+    lines.append("# 処理済みの記事は batch 実行時に自動スキップされます")
+    lines.append("")
+
+    for url in urls:
+        if url in existing_urls:
+            lines.append(f"# {url}  (処理済み)")
+            processed_count += 1
+        else:
+            lines.append(url)
+            new_count += 1
+
+    # 4. ファイル出力
+    output_path = Path(output)
+    output_path.write_text("\n".join(lines) + "\n")
+
+    # 5. 結果表示
+    console.print()
+    console.print("[bold green]✓ URL リストを出力しました[/bold green]")
+    console.print()
+    console.print(f"  [bold]ファイル[/bold]    {output_path.absolute()}")
+    console.print(f"  [bold]合計[/bold]      {len(urls)} 件")
+    console.print(f"  [bold]未処理[/bold]    {new_count} 件")
+    console.print(f"  [bold]処理済み[/bold]  {processed_count} 件（コメントアウト済み）")
+    console.print()
+    if new_count > 0:
+        console.print(f"  → [bold]medium-notion batch -f {output}[/bold] で一括翻訳できます")
+    else:
+        console.print("  [dim]すべての記事が処理済みです[/dim]")
+    console.print()
 
 
 def _show_batch_result(

@@ -98,6 +98,7 @@ medium-notion-translator/
 |---------|------|--------------|
 | `translate` | 記事を翻訳して Notion に追加 | `-u URL`（必須）, `-s SCORE`（1-10）, `--headless/--gui` |
 | `batch` | URL リストから一括翻訳 | `-f FILE`（必須）, `-s SCORE`, `-i INTERVAL`（デフォルト30秒）, `--headless/--gui` |
+| `bookmark` | リストの URL をファイルに出力 | `-l LIST_NAME`（デフォルト `Reading list`）, `-o OUTPUT`（デフォルト `bookmarks.txt`）, `--headless/--gui` |
 | `login` | Medium にブラウザでログイン | なし（常に GUI モード） |
 | `index` | Notion DB から記事インデックスを構築 | なし |
 | `setup` | 対話型セットアップウィザード | なし |
@@ -122,6 +123,29 @@ medium-notion-translator/
    - エラー時はログに記録してスキップ、次の記事へ
    - 最後の記事以外はインターバル待機（デフォルト30秒）
 8. ブラウザ終了 → インデックス一括保存 → バッチ結果サマリー表示
+
+**bookmark コマンドの処理フロー**:
+1. 設定読み込み（1回）
+2. ブラウザ初期化
+3. リストページへの遷移:
+   - `Reading list` の場合: `/me/list/reading-list` に直接アクセス
+   - カスタムリストの場合: `/me/lists`（ライブラリ）にアクセス → リスト名を検索 → クリックして遷移
+4. `browser.fetch_reading_list()` で URL 一覧取得
+   - 無限スクロールで全記事を読み込み
+   - JavaScript で DOM から記事 URL パターンにマッチするリンクを抽出
+   - フォールバック: 厳密パターンで0件 → 緩い条件で再試行
+5. 既存インデックスと照合（処理済み記事のマーキング用）
+6. テキストファイルに出力（未処理 URL は通常行、処理済みは `#` コメントアウト）
+7. 結果サマリー表示
+
+出力ファイル形式（`batch -f` にそのまま渡せる）:
+```text
+# Medium「toNotion」(2025-02-12 取得, 8件)
+# 処理済みの記事は batch 実行時に自動スキップされます
+https://medium.com/@user/article-1-abc123
+https://medium.com/@user/article-2-def456
+# https://medium.com/@user/article-3-ghi789  (処理済み)
+```
 
 **インデックス管理**:
 - `_load_article_index()`: `article-index.json` から既存記事一覧を読み込む
@@ -166,6 +190,23 @@ medium-notion-translator/
 - `navigator.webdriver` を `undefined` に上書き
 - カスタム User-Agent 設定
 - Chromium 起動時に `--disable-blink-features=AutomationControlled`
+
+**リスト取得フロー** (`fetch_reading_list(list_name)`):
+1. セッションファイル存在チェック
+2. リストページへの遷移:
+   - `Reading list`（デフォルト）: `/me/list/reading-list` に直接アクセス
+   - カスタムリスト: `/me/lists` にアクセス → `_navigate_to_custom_list()` でリスト名を DOM から検索 → クリック遷移
+3. ログインページへのリダイレクト検出（セッション期限切れの早期検出）
+4. 無限スクロール（`scrollHeight` が変化しなくなるまで、最大 50 回）
+5. JavaScript で全 `<a>` タグの href を走査し、記事 URL パターンにマッチするものを抽出
+6. URL パターン: `/@user/slug-hash`, `/publication/slug-hash`, `/p/hash`
+7. ナビ・フッター等の非記事リンクを除外（`/me/`, `/m/`, `/tag/`, `/plans` 等）
+8. フォールバック: 厳密パターンで 0 件 → 緩い条件で再試行、それでも 0 件 → デバッグ情報出力
+
+**カスタムリスト遷移** (`_navigate_to_custom_list`):
+- ライブラリページの DOM 内で `h2`, `h3`, `a` 等のテキストからリスト名を検索
+- 見つかったらクリック可能な親要素（`<a>` タグ等）を探して遷移
+- 見つからない場合は利用可能なリスト名をエラーメッセージに含めて表示
 
 **404 検出ロジック**:
 - `document.title === 'Medium'`
@@ -557,7 +598,23 @@ medium-notion batch -f urls.txt
 medium-notion batch -f urls.txt -s 7 -i 60
 ```
 
-### 9.4 メンテナンス
+### 9.4 ブックマークから一括翻訳
+
+```bash
+# カスタムリスト「toNotion」の URL をエクスポート
+medium-notion bookmark -l toNotion
+
+# デフォルト（Reading list）の場合
+medium-notion bookmark
+
+# 出力ファイルの内容を確認（必要に応じて編集可能）
+cat bookmarks.txt
+
+# そのまま一括翻訳に渡す
+medium-notion batch -f bookmarks.txt
+```
+
+### 9.5 メンテナンス
 
 ```bash
 # 記事インデックスを Notion DB から再構築
