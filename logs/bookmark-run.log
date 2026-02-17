@@ -1,0 +1,39 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Medium「toNotion」→ 一括処理                                                 │
+│ Phase 1: URL エクスポート → Phase 2: 翻訳 → Phase 3: リスト削除              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+[32m[1mSUCCESS [0m | [36mmedium_notion.logger[0m:[36msuccess[0m | ✓ Notion DB に接続: 「Medium DB」
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ 記事インデックス読み込み: 11 件
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ Notion DB に登録済みの URL: 33 件
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ 保存済みセッションを読み込みました
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Phase 1: URL エクスポート                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ Medium のリスト「toNotion」を取得中...
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ ライブラリからリスト「toNotion」を検索中...
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ リスト「toNotion」に遷移中: https://medium.com/@hxddrywx/list/tonotion-86b06cb272bc?source=my_lists---------1-------86b06cb272bc----------------------------
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ 遷移先: https://medium.com/@hxddrywx/list/tonotion-86b06cb272bc
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ スクロールして全記事を読み込み中...
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ スクロール完了（1 回）
+[32m[1mSUCCESS [0m | [36mmedium_notion.logger[0m:[36msuccess[0m | ✓ リスト「toNotion」から 1 件の記事 URL を取得しました
+
+✓ URL リストを出力しました
+  合計 1 件（未処理: 0, 処理済み: 1）
+
+  すべての記事が処理済みです。翻訳をスキップします
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Phase 3: リスト削除                                                          │
+│ 1 件をリスト「toNotion」から削除します                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ リスト「toNotion」から 1 件の記事を削除中...
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ ライブラリからリスト「toNotion」を検索中...
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ リスト「toNotion」に遷移中: https://medium.com/@hxddrywx/list/tonotion-86b06cb272bc?source=my_lists---------1-------86b06cb272bc----------------------------
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ 遷移先: https://medium.com/@hxddrywx/list/tonotion-86b06cb272bc
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ ブックマークボタンをクリック: add to list bookmark button
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶ リストのチェックを解除: toNotion (via text-row)
+[1mINFO    [0m | [36mmedium_notion.logger[0m:[36mstep[0m | ▶   ✓ 削除: https://medium.com/coding-nexus/99-of-developers-dont-know-h...
+[32m[1mSUCCESS [0m | [36mmedium_notion.logger[0m:[36msuccess[0m | ✓ リスト削除完了: 成功 1 件, 失敗 0 件
+
+  ✓ 1 件をリストから削除しました
+

@@ -1,5 +1,4 @@
-# Medium「toNotion」(2026-02-12 取得, 2件)
+# Medium「toNotion」(2026-02-17 取得, 1件)
 # 処理済みの記事は batch 実行時に自動スキップされます
 
-https://medium.com/@lmpo/mastering-agentic-coding-in-claude-a-guide-to-skills-sub-agents-slash-commands-and-mcp-servers-5c58e03d4a35
-https://medium.com/@uchit86/modern-architecture-patterns-2026-edition-e526aeaf85d7
+# https://medium.com/coding-nexus/99-of-developers-dont-know-how-to-use-coding-agents-well-9256e3c02e16  (処理済み)
