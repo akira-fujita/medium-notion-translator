@@ -113,6 +113,26 @@ class TestNotionAPIDataSource:
         call_kwargs = mock_sdk.data_sources.query.call_args[1]
         assert "data_source_id" in call_kwargs
 
+    def test_list_existing_urls_uses_data_sources_sdk(self, notion_client):
+        """list_existing_urls が SDK の data_sources.query を使うこと"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.query.return_value = {
+            "results": [
+                {"properties": {"URL": {"url": "https://medium.com/article-1"}}},
+                {"properties": {"URL": {"url": "https://medium.com/article-2"}}},
+                {"properties": {"URL": {"url": None}}},
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        }
+        urls = notion_client.list_existing_urls()
+
+        assert urls == {
+            "https://medium.com/article-1",
+            "https://medium.com/article-2",
+        }
+        mock_sdk.data_sources.query.assert_called_once()
+
     def test_create_page_uses_data_source_parent(
         self, notion_client, sample_translation
     ):

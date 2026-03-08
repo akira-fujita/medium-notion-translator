@@ -148,38 +148,29 @@ class NotionClient:
 
     def list_existing_urls(self) -> set[str]:
         """DB 内の既存記事の URL 一覧を取得（重複チェック用）"""
-        import httpx
-
         urls: set[str] = set()
-        api_url = "https://api.notion.com/v1/data_sources/{}/query".format(
-            self.database_id
-        )
-        headers = {
-            "Authorization": f"Bearer {self.config.notion_api_key}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json",
-        }
 
         try:
             has_more = True
             start_cursor = None
             while has_more:
-                body: dict = {"page_size": 100}
+                params: dict = {
+                    "data_source_id": self.database_id,
+                    "page_size": 100,
+                }
                 if start_cursor:
-                    body["start_cursor"] = start_cursor
+                    params["start_cursor"] = start_cursor
 
-                resp = httpx.post(api_url, headers=headers, json=body, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
+                response = self.client.data_sources.query(**params)
 
-                for page in data.get("results", []):
+                for page in response.get("results", []):
                     props = page.get("properties", {})
                     url_val = props.get("URL", {}).get("url")
                     if url_val:
                         urls.add(url_val)
 
-                has_more = data.get("has_more", False)
-                start_cursor = data.get("next_cursor")
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
 
             log.step(f"Notion DB に登録済みの URL: {len(urls)} 件")
         except Exception as e:
