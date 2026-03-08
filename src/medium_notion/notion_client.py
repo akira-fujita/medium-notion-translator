@@ -83,7 +83,7 @@ class NotionClient:
     def check_access(self) -> bool:
         """データベースへのアクセス権限を確認"""
         try:
-            db = self.client.databases.retrieve(database_id=self.database_id)
+            db = self.client.data_sources.retrieve(data_source_id=self.database_id)
             db_title = ""
             for t in db.get("title", []):
                 db_title += t.get("plain_text", "")
@@ -111,14 +111,14 @@ class NotionClient:
             start_cursor = None
             while has_more:
                 params = {
-                    "database_id": self.database_id,
+                    "data_source_id": self.database_id,
                     "page_size": 100,
                     "sorts": [{"property": "read date", "direction": "descending"}],
                 }
                 if start_cursor:
                     params["start_cursor"] = start_cursor
 
-                response = self.client.databases.query(**params)
+                response = self.client.data_sources.query(**params)
 
                 for page in response.get("results", []):
                     props = page.get("properties", {})
@@ -151,7 +151,7 @@ class NotionClient:
         import httpx
 
         urls: set[str] = set()
-        api_url = "https://api.notion.com/v1/databases/{}/query".format(
+        api_url = "https://api.notion.com/v1/data_sources/{}/query".format(
             self.database_id
         )
         headers = {
@@ -208,7 +208,7 @@ class NotionClient:
             # 最初の 100 ブロックでページを作成
             first_batch = children[:MAX_BLOCKS_PER_REQUEST]
             response = self.client.pages.create(
-                parent={"database_id": self.database_id},
+                parent={"data_source_id": self.database_id},
                 properties=properties,
                 children=first_batch,
             )
