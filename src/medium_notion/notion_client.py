@@ -619,7 +619,7 @@ def _text_obj(
         "type": "text",
         "text": {"content": content},
     }
-    if link:
+    if link and link.strip() and link.strip().startswith(("http://", "https://")):
         obj["text"]["link"] = {"url": link}
 
     annotations = {}

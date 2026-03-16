@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from medium_notion.notion_client import NotionClient
+from medium_notion.notion_client import NotionClient, _text_obj
 
 
 @pytest.fixture
@@ -74,3 +74,47 @@ class TestNotionClient:
         block = notion_client._heading_block("テスト見出し", level=2)
         assert block["type"] == "heading_2"
         assert block["heading_2"]["rich_text"][0]["text"]["content"] == "テスト見出し"
+
+
+class TestTextObjUrlValidation:
+    """_text_obj の URL バリデーションテスト"""
+
+    def test_valid_https_url(self):
+        """https URL はリンクとして設定されること"""
+        obj = _text_obj("text", link="https://example.com")
+        assert obj["text"]["link"] == {"url": "https://example.com"}
+
+    def test_valid_http_url(self):
+        """http URL はリンクとして設定されること"""
+        obj = _text_obj("text", link="http://example.com")
+        assert obj["text"]["link"] == {"url": "http://example.com"}
+
+    def test_fragment_only_url(self):
+        """#fragment のみの URL はリンクにならないこと"""
+        obj = _text_obj("text", link="#section")
+        assert "link" not in obj["text"]
+
+    def test_relative_path_url(self):
+        """相対パス URL はリンクにならないこと"""
+        obj = _text_obj("text", link="/path/to/page")
+        assert "link" not in obj["text"]
+
+    def test_empty_url(self):
+        """空文字 URL はリンクにならないこと"""
+        obj = _text_obj("text", link="")
+        assert "link" not in obj["text"]
+
+    def test_whitespace_url(self):
+        """空白のみの URL はリンクにならないこと"""
+        obj = _text_obj("text", link="  ")
+        assert "link" not in obj["text"]
+
+    def test_none_url(self):
+        """None はリンクにならないこと"""
+        obj = _text_obj("text", link=None)
+        assert "link" not in obj["text"]
+
+    def test_javascript_url(self):
+        """javascript: URL はリンクにならないこと"""
+        obj = _text_obj("text", link="javascript:alert(1)")
+        assert "link" not in obj["text"]

@@ -1,7 +1,7 @@
 -- Medium Notion Translator - Bookmark Runner
 -- Dock にドロップしてワンクリックで翻訳実行
 
-set projectDir to "/Users/akira.fujita/Documents/GitHub/medium-notion-translator"
+set projectDir to "/Users/akirafujita/Desktop/Box/Dev/medium-notion-translator"
 set venvBin to projectDir & "/.venv/bin/medium-notion"
 set logFile to projectDir & "/logs/bookmark-run.log"
 
