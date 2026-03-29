@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "ja"
+tone_instructions: "日本語でレビューしてください"
+early_access: true
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "src/**"
+      instructions: "Pythonのベストプラクティスに従っているか確認してください"
+    - path: "tests/**"
+      instructions: "テストの網羅性と可読性を確認してください"
+
+chat:
+  auto_reply: true
