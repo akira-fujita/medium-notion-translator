@@ -20,6 +20,25 @@ from . import logger as log
 
 console = Console()
 
+# 環境起因の致命的エラーパターン（記事を変えても解決しない）
+_FATAL_ERROR_PATTERNS = [
+    "Self-signed certificate",
+    "Unable to connect to API",
+    "invalid x-api-key",
+    "401 Unauthorized",
+    "Claude Code CLI が見つかりません",
+]
+
+
+def _is_fatal_error(error_message: str) -> bool:
+    """環境起因の致命的エラーかどうかを判定する。
+
+    SSL 証明書、API 接続不可、認証エラーなど、
+    記事を変えても解決しないエラーの場合 True を返す。
+    """
+    return any(pattern in error_message for pattern in _FATAL_ERROR_PATTERNS)
+
+
 # -h でもヘルプを表示できるようにする
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -404,8 +423,17 @@ async def _batch_translate(
                 )
 
             except (RuntimeError, Exception) as e:
-                failures.append((url, str(e)))
+                error_msg = str(e)
+                failures.append((url, error_msg))
                 console.print(f"  [red]✗ エラー: {e}[/red]")
+
+                if _is_fatal_error(error_msg):
+                    remaining = len(urls) - i
+                    console.print(
+                        f"\n[red bold]✗ 致命的エラーを検出 — バッチ処理を中断します[/red bold]"
+                        f"\n[red]  残り {remaining} 件はスキップされました[/red]"
+                    )
+                    break
 
             # インターバル（最後の記事以外）
             if i < len(urls) and url not in {s[0] for s in skipped}:
@@ -775,8 +803,17 @@ async def _bookmark_run(
                     )
 
                 except (RuntimeError, Exception) as e:
-                    failures.append((url, str(e)))
+                    error_msg = str(e)
+                    failures.append((url, error_msg))
                     console.print(f"  [red]✗ エラー: {e}[/red]")
+
+                    if _is_fatal_error(error_msg):
+                        remaining = len(new_urls) - i
+                        console.print(
+                            f"\n[red bold]✗ 致命的エラーを検出 — バッチ処理を中断します[/red bold]"
+                            f"\n[red]  残り {remaining} 件はスキップされました[/red]"
+                        )
+                        break
 
                 # インターバル（最後の記事以外）
                 if i < len(new_urls):
