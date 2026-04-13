@@ -83,7 +83,7 @@ class NotionClient:
     def check_access(self) -> bool:
         """データベースへのアクセス権限を確認"""
         try:
-            db = self.client.databases.retrieve(database_id=self.database_id)
+            db = self.client.data_sources.retrieve(data_source_id=self.database_id)
             db_title = ""
             for t in db.get("title", []):
                 db_title += t.get("plain_text", "")
@@ -111,14 +111,14 @@ class NotionClient:
             start_cursor = None
             while has_more:
                 params = {
-                    "database_id": self.database_id,
+                    "data_source_id": self.database_id,
                     "page_size": 100,
                     "sorts": [{"property": "read date", "direction": "descending"}],
                 }
                 if start_cursor:
                     params["start_cursor"] = start_cursor
 
-                response = self.client.databases.query(**params)
+                response = self.client.data_sources.query(**params)
 
                 for page in response.get("results", []):
                     props = page.get("properties", {})
@@ -148,38 +148,29 @@ class NotionClient:
 
     def list_existing_urls(self) -> set[str]:
         """DB 内の既存記事の URL 一覧を取得（重複チェック用）"""
-        import httpx
-
         urls: set[str] = set()
-        api_url = "https://api.notion.com/v1/databases/{}/query".format(
-            self.database_id
-        )
-        headers = {
-            "Authorization": f"Bearer {self.config.notion_api_key}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json",
-        }
 
         try:
             has_more = True
             start_cursor = None
             while has_more:
-                body: dict = {"page_size": 100}
+                params: dict = {
+                    "data_source_id": self.database_id,
+                    "page_size": 100,
+                }
                 if start_cursor:
-                    body["start_cursor"] = start_cursor
+                    params["start_cursor"] = start_cursor
 
-                resp = httpx.post(api_url, headers=headers, json=body, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
+                response = self.client.data_sources.query(**params)
 
-                for page in data.get("results", []):
+                for page in response.get("results", []):
                     props = page.get("properties", {})
                     url_val = props.get("URL", {}).get("url")
                     if url_val:
                         urls.add(url_val)
 
-                has_more = data.get("has_more", False)
-                start_cursor = data.get("next_cursor")
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
 
             log.step(f"Notion DB に登録済みの URL: {len(urls)} 件")
         except Exception as e:
@@ -208,7 +199,7 @@ class NotionClient:
             # 最初の 100 ブロックでページを作成
             first_batch = children[:MAX_BLOCKS_PER_REQUEST]
             response = self.client.pages.create(
-                parent={"database_id": self.database_id},
+                parent={"data_source_id": self.database_id},
                 properties=properties,
                 children=first_batch,
             )

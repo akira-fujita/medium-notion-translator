@@ -59,9 +59,9 @@ class Config(BaseModel):
 def load_config(env_path: str | None = None) -> Config:
     """設定を .env から読み込んで返す"""
     if env_path:
-        load_dotenv(env_path)
+        load_dotenv(env_path, override=True)
     else:
-        load_dotenv()
+        load_dotenv(override=True)
 
     return Config(
         notion_api_key=os.getenv("NOTION_API_KEY", ""),
