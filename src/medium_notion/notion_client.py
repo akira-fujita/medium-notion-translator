@@ -216,6 +216,96 @@ class NotionClient:
 
         return sorted(topics)
 
+    def list_pages_without_topics(self) -> list[dict]:
+        """Topics が未設定のページ一覧を取得（バックフィル用）"""
+        pages: list[dict] = []
+
+        try:
+            has_more = True
+            start_cursor = None
+            while has_more:
+                params: dict = {
+                    "data_source_id": self.database_id,
+                    "page_size": 100,
+                }
+                if start_cursor:
+                    params["start_cursor"] = start_cursor
+
+                response = self.client.data_sources.query(**params)
+
+                for page in response.get("results", []):
+                    props = page.get("properties", {})
+
+                    # Topics が空または未設定のページを対象にする
+                    topics_data = props.get("Topics", {}).get("multi_select", [])
+                    if topics_data:
+                        continue
+
+                    title_parts = props.get("名前", {}).get("title", [])
+                    title = "".join(t.get("plain_text", "") for t in title_parts)
+                    url = props.get("URL", {}).get("url", "")
+
+                    if title:
+                        pages.append({
+                            "page_id": page["id"],
+                            "title": title,
+                            "url": url,
+                        })
+
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
+
+            log.step(f"Topics 未設定: {len(pages)} 件")
+        except APIResponseError as e:
+            log.warn(f"ページ一覧の取得に失敗: {e}")
+
+        return pages
+
+    def get_page_text(self, page_id: str) -> str:
+        """ページの blocks からテキストを抽出する"""
+        texts: list[str] = []
+
+        try:
+            has_more = True
+            start_cursor = None
+            while has_more:
+                params: dict = {"block_id": page_id}
+                if start_cursor:
+                    params["start_cursor"] = start_cursor
+
+                response = self.client.blocks.children.list(**params)
+
+                for block in response.get("results", []):
+                    block_type = block.get("type", "")
+                    block_data = block.get(block_type, {})
+                    rich_text = block_data.get("rich_text", [])
+                    text = "".join(
+                        t.get("plain_text", "") for t in rich_text
+                    )
+                    if text:
+                        texts.append(text)
+
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
+
+        except Exception as e:
+            log.warn(f"ページ本文の取得に失敗: {e}")
+
+        return "\n".join(texts)
+
+    def update_page_topics(self, page_id: str, topics: list[str]) -> None:
+        """ページの Topics プロパティを更新する"""
+        self.client.pages.update(
+            page_id=page_id,
+            properties={
+                "Topics": {
+                    "multi_select": [
+                        {"name": topic} for topic in topics
+                    ]
+                }
+            },
+        )
+
     def create_page(
         self,
         result: TranslationResult,

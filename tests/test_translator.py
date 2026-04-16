@@ -153,6 +153,54 @@ class TestExtractMetadata:
         assert topics == []
 
 
+class TestExtractTopicsOnly:
+    def test_extract_topics_returns_list(self, mock_config):
+        """extract_topics がトピックのリストを返すこと"""
+        service = TranslationService(mock_config)
+
+        raw_json = json.dumps({
+            "topics": ["Kubernetes", "モジューラーモノリス", "運用負荷"],
+        }, ensure_ascii=False)
+
+        with patch.object(service, "_call_claude", return_value=raw_json):
+            topics = service.extract_topics(
+                title="テスト記事",
+                content="記事の本文テキスト",
+                existing_topics=["Kubernetes"],
+            )
+
+        assert topics == ["Kubernetes", "モジューラーモノリス", "運用負荷"]
+
+    def test_extract_topics_passes_existing_topics(self, mock_config):
+        """既存 Topics がプロンプトに含まれること"""
+        service = TranslationService(mock_config)
+
+        raw_json = json.dumps({"topics": ["AI"]}, ensure_ascii=False)
+
+        with patch.object(service, "_call_claude", return_value=raw_json) as mock_claude:
+            service.extract_topics(
+                title="テスト",
+                content="本文",
+                existing_topics=["Kubernetes", "モジューラーモノリス"],
+            )
+            prompt_text = mock_claude.call_args[0][0]
+            assert "Kubernetes" in prompt_text
+            assert "モジューラーモノリス" in prompt_text
+
+    def test_extract_topics_failure_returns_empty(self, mock_config):
+        """抽出失敗時に空リストを返すこと"""
+        service = TranslationService(mock_config)
+
+        with patch.object(service, "_call_claude", side_effect=RuntimeError("fail")):
+            topics = service.extract_topics(
+                title="テスト",
+                content="本文",
+                existing_topics=[],
+            )
+
+        assert topics == []
+
+
 class TestCallClaude:
     """_call_claude のテスト"""
 

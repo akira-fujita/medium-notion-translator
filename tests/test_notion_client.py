@@ -323,3 +323,114 @@ class TestListExistingTopics:
         topics = notion_client.list_existing_topics()
 
         assert topics == []
+
+
+class TestBackfillMethods:
+    """バックフィル用メソッドのテスト"""
+
+    def test_list_pages_without_topics(self, notion_client):
+        """Topics 未設定のページ一覧を返すこと"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.query.return_value = {
+            "results": [
+                {
+                    "id": "page-1",
+                    "properties": {
+                        "名前": {"title": [{"plain_text": "記事A"}]},
+                        "URL": {"url": "https://medium.com/a"},
+                        "Topics": {"multi_select": []},
+                    },
+                },
+                {
+                    "id": "page-2",
+                    "properties": {
+                        "名前": {"title": [{"plain_text": "記事B"}]},
+                        "URL": {"url": "https://medium.com/b"},
+                        "Topics": {"multi_select": [{"name": "AI"}]},
+                    },
+                },
+                {
+                    "id": "page-3",
+                    "properties": {
+                        "名前": {"title": [{"plain_text": "記事C"}]},
+                        "URL": {"url": "https://medium.com/c"},
+                    },
+                },
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        }
+        pages = notion_client.list_pages_without_topics()
+
+        assert len(pages) == 2
+        assert pages[0]["page_id"] == "page-1"
+        assert pages[0]["title"] == "記事A"
+        assert pages[1]["page_id"] == "page-3"
+
+    def test_get_page_text(self, notion_client):
+        """ページの blocks からテキストを抽出すること"""
+        mock_sdk = notion_client.client
+        mock_sdk.blocks.children.list.return_value = {
+            "results": [
+                {
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"plain_text": "最初の段落です。"}]
+                    },
+                },
+                {
+                    "type": "heading_2",
+                    "heading_2": {
+                        "rich_text": [{"plain_text": "見出し"}]
+                    },
+                },
+                {
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"plain_text": "2番目の段落。"}]
+                    },
+                },
+                {
+                    "type": "divider",
+                    "divider": {},
+                },
+            ],
+            "has_more": False,
+        }
+        text = notion_client.get_page_text("page-1")
+
+        assert "最初の段落です。" in text
+        assert "見出し" in text
+        assert "2番目の段落。" in text
+
+    def test_get_page_text_empty(self, notion_client):
+        """空のページで空文字列を返すこと"""
+        mock_sdk = notion_client.client
+        mock_sdk.blocks.children.list.return_value = {
+            "results": [],
+            "has_more": False,
+        }
+        text = notion_client.get_page_text("page-1")
+
+        assert text == ""
+
+    def test_update_page_topics(self, notion_client):
+        """ページの Topics を更新すること"""
+        mock_sdk = notion_client.client
+        mock_sdk.pages.update.return_value = {"id": "page-1"}
+
+        notion_client.update_page_topics(
+            "page-1", ["Kubernetes", "モジューラーモノリス"]
+        )
+
+        mock_sdk.pages.update.assert_called_once_with(
+            page_id="page-1",
+            properties={
+                "Topics": {
+                    "multi_select": [
+                        {"name": "Kubernetes"},
+                        {"name": "モジューラーモノリス"},
+                    ]
+                }
+            },
+        )

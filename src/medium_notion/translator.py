@@ -98,6 +98,39 @@ METADATA_PROMPT = textwrap.dedent("""\
 
 MAX_CHUNK_SIZE = 15000
 
+# --- Topics 専用抽出プロンプト（バックフィル用） ---
+TOPICS_ONLY_PROMPT = textwrap.dedent("""\
+    あなたは Engineering Manager 向けのナレッジキュレーターです。
+    以下の技術記事から検索用キーワード（Topics）を抽出し、JSON で返してください。
+    JSON のみを出力し、他のテキストは含めないでください。
+
+    出力形式:
+    {{
+      "topics": ["トピック1", "トピック2", "..."]
+    }}
+
+    topics のルール:
+    - 記事の内容から検索用キーワードを 8〜15個 抽出する
+    - 技術用語（5〜10個）: フレームワーク、ライブラリ、パターン名、プロトコル等
+    - 業務・組織観点のキーワード（2〜5個）: 運用負荷、チーム分割、コスト最適化等
+    - 表記ルール:
+      - 製品名・プロトコル名・略語は英語のまま（例: Kubernetes, gRPC, ACID, CI/CD）
+      - 概念・方法論・業務課題は日本語（例: モジューラーモノリス, 分散トレーシング, 運用負荷）
+    - 下記の「既存 Topics 一覧」に同じ概念があれば、既存の表記を優先的に使うこと
+
+    ---
+
+    記事タイトル: {title}
+
+    記事本文（先頭3000文字）:
+    {content_preview}
+
+    ---
+
+    既存 Topics 一覧（同じ概念は既存の表記を優先すること）:
+    {existing_topics}
+""")
+
 
 class TranslationService:
     """Claude Code CLI を使った翻訳サービス（2ステップ方式）"""
@@ -282,6 +315,34 @@ class TranslationService:
                         break
 
         return None
+
+    def extract_topics(
+        self,
+        title: str,
+        content: str,
+        existing_topics: list[str],
+    ) -> list[str]:
+        """記事のタイトルと本文から Topics のみを抽出する（バックフィル用）"""
+        if existing_topics:
+            topics_text = ", ".join(existing_topics[:200])
+        else:
+            topics_text = "（まだ登録された Topics はありません）"
+
+        prompt = TOPICS_ONLY_PROMPT.format(
+            title=title,
+            content_preview=content[:3000],
+            existing_topics=topics_text,
+        )
+
+        try:
+            raw = self._call_claude(prompt)
+            data = self._parse_json(raw)
+            if data:
+                return data.get("topics", [])
+        except Exception as e:
+            log.warn(f"Topics 抽出に失敗: {e}")
+
+        return []
 
     def _call_claude(self, prompt: str) -> str:
         """Claude Code CLI を呼び出して応答を取得（stdin 経由）"""

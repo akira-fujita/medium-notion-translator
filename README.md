@@ -161,6 +161,9 @@ Slack Incoming Webhook は https://api.slack.com/messaging/webhooks で作成で
 # 記事インデックスを Notion DB から再構築
 medium-notion index
 
+# 既存記事に Topics を自動付与（バックフィル）
+medium-notion backfill-topics
+
 # Medium に再ログイン（セッション期限切れ時）
 medium-notion login
 

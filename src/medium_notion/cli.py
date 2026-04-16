@@ -937,6 +937,104 @@ def _shorten_url(url: str, max_len: int = 60) -> str:
     return url[:max_len - 3] + "..."
 
 
+@cli.command("backfill-topics", context_settings=CONTEXT_SETTINGS)
+def backfill_topics():
+    """既存記事に Topics を自動付与する（バックフィル）。
+
+    Notion DB 内の Topics が未設定の記事を検出し、
+    ページ本文から検索用キーワードを抽出して Topics プロパティに設定します。
+
+    \b
+    処理の流れ:
+      1. Topics 未設定の記事を検出
+      2. 各ページの本文を読み取り
+      3. Claude Code CLI で Topics を抽出（8〜15個）
+      4. Notion ページの Topics プロパティを更新
+
+    \b
+    例:
+      medium-notion backfill-topics
+    """
+    try:
+        config = load_config()
+    except ValidationError as e:
+        console.print(f"[red]設定エラー:[/red] {e}")
+        console.print("[dim]→ `medium-notion setup` で設定してください[/dim]")
+        sys.exit(1)
+
+    log.setup_logger(config.log_level)
+
+    console.print(Panel("[bold]Topics バックフィル[/bold]", style="blue"))
+
+    # Claude Code の確認
+    if not Config.check_claude_code():
+        console.print(
+            "[red]Claude Code CLI が見つかりません[/red]\n"
+            "  → npm install -g @anthropic-ai/claude-code\n"
+            "  → Max プランでログイン: claude login"
+        )
+        sys.exit(1)
+
+    # Notion 接続確認
+    notion = NotionClient(config)
+    if not notion.check_access():
+        sys.exit(1)
+
+    # Topics 未設定のページを取得
+    pages = notion.list_pages_without_topics()
+    if not pages:
+        console.print("\n[green]すべての記事に Topics が設定済みです[/green]\n")
+        return
+
+    console.print(f"\n  Topics 未設定: [bold]{len(pages)}[/bold] 件\n")
+
+    # 既存 Topics を取得（表記ゆれ防止）
+    existing_topics = notion.list_existing_topics()
+    translator = TranslationService(config)
+
+    successes = 0
+    failures = 0
+
+    for i, page in enumerate(pages, start=1):
+        title = page["title"]
+        console.print(f"  [{i}/{len(pages)}] {title[:60]}...")
+
+        try:
+            # ページ本文を取得
+            content = notion.get_page_text(page["page_id"])
+            if not content:
+                console.print(f"    [yellow]本文が空 — スキップ[/yellow]")
+                failures += 1
+                continue
+
+            # Topics 抽出
+            topics = translator.extract_topics(
+                title=title,
+                content=content,
+                existing_topics=existing_topics,
+            )
+
+            if not topics:
+                console.print(f"    [yellow]Topics 抽出失敗 — スキップ[/yellow]")
+                failures += 1
+                continue
+
+            # Notion ページを更新
+            notion.update_page_topics(page["page_id"], topics)
+            successes += 1
+            console.print(f"    [green]✓ {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}[/green]")
+
+        except Exception as e:
+            failures += 1
+            console.print(f"    [red]✗ {e}[/red]")
+
+    console.print()
+    console.print(
+        f"[bold green]✓ バックフィル完了[/bold green]  "
+        f"成功: {successes} 件, 失敗: {failures} 件\n"
+    )
+
+
 @cli.command(context_settings=CONTEXT_SETTINGS)
 def index():
     """Notion DB から記事インデックスを構築・更新する。

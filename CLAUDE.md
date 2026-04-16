@@ -34,6 +34,7 @@ medium-notion batch -f urls.txt -s 7 -i 60
 medium-notion login          # Medium 再ログイン
 medium-notion test           # 接続テスト
 medium-notion index          # 記事インデックス再構築
+medium-notion backfill-topics  # 既存記事に Topics を自動付与
 
 # 開発
 pip install -e .             # ローカルインストール
