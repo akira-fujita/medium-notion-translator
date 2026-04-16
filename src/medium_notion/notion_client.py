@@ -79,6 +79,7 @@ class NotionClient:
         self.config = config
         self.client = NotionSDKClient(auth=config.notion_api_key)
         self.database_id = config.notion_database_id_formatted
+        self._has_topics_property = False
 
     def check_access(self) -> bool:
         """データベースへのアクセス権限を確認"""
@@ -87,6 +88,9 @@ class NotionClient:
             db_title = ""
             for t in db.get("title", []):
                 db_title += t.get("plain_text", "")
+            # DB スキーマから Topics プロパティの有無を検出
+            db_props = db.get("properties", {})
+            self._has_topics_property = "Topics" in db_props
             log.success(f"Notion DB に接続: 「{db_title}」")
             return True
         except APIResponseError as e:
@@ -178,6 +182,40 @@ class NotionClient:
 
         return urls
 
+    def list_existing_topics(self) -> list[str]:
+        """DB 内の既存 Topics を重複排除してソート済みリストで返す"""
+        topics: set[str] = set()
+
+        try:
+            has_more = True
+            start_cursor = None
+            while has_more:
+                params: dict = {
+                    "data_source_id": self.database_id,
+                    "page_size": 100,
+                }
+                if start_cursor:
+                    params["start_cursor"] = start_cursor
+
+                response = self.client.data_sources.query(**params)
+
+                for page in response.get("results", []):
+                    props = page.get("properties", {})
+                    topics_data = props.get("Topics", {}).get("multi_select", [])
+                    for t in topics_data:
+                        name = t.get("name", "")
+                        if name:
+                            topics.add(name)
+
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
+
+            log.step(f"既存 Topics: {len(topics)} 件")
+        except Exception as e:
+            log.warn(f"既存 Topics の取得に失敗: {e}")
+
+        return sorted(topics)
+
     def create_page(
         self,
         result: TranslationResult,
@@ -261,6 +299,14 @@ class NotionClient:
             properties["Categories"] = {
                 "multi_select": [
                     {"name": cat} for cat in result.categories
+                ]
+            }
+
+        # Topics（multi-select） — DB にプロパティが存在する場合のみ
+        if result.topics and self._has_topics_property:
+            properties["Topics"] = {
+                "multi_select": [
+                    {"name": topic} for topic in result.topics
                 ]
             }
 

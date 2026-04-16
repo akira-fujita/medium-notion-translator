@@ -18,7 +18,7 @@ Medium 記事 URL
 記事の英語テキスト取得（DOM ツリーウォーカーでマークダウン変換）
     ↓  Claude Code CLI（2ステップ方式）
     ↓    Step 1: 本文翻訳（マークダウン出力）
-    ↓    Step 2: タイトル翻訳 + カテゴリ + 構造化要約（JSON 出力）
+    ↓    Step 2: タイトル翻訳 + カテゴリ + Topics + 構造化要約（JSON 出力）
     ↓  Notion API
 Notion DB に新規ページ作成（目次 → 要約 → 翻訳 → 元記事リンク）
     ↓
@@ -180,6 +180,7 @@ medium-notion -h
 | 名前 | Title | 日英併記タイトル（自動） |
 | URL | URL | 元の Medium 記事 URL（自動） |
 | Categories | Multi-select | AI, LLM, Web3 等のカテゴリ（自動） |
+| Topics | Multi-select | 検索用キーワード 8〜15個（自動） |
 | Score | Number | 記事のスコア 1-10（`-s` で手動指定） |
 | create date | Date | ページ作成日（翻訳実行日、自動） |
 

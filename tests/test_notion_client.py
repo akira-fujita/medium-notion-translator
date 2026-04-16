@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from medium_notion.notion_client import NotionClient, _text_obj
+from medium_notion.models import TranslationResult
 
 
 @pytest.fixture
@@ -37,6 +38,29 @@ class TestNotionClient:
 
         # Score
         assert props["Score"]["number"] == 8
+
+    def test_build_properties_with_topics(self, notion_client, sample_translation):
+        """Topics が multi_select として構築されること"""
+        notion_client._has_topics_property = True
+        props = notion_client._build_properties(sample_translation, score=8)
+
+        assert "Topics" in props
+        topics_ms = props["Topics"]["multi_select"]
+        assert len(topics_ms) == 4
+        assert topics_ms[0]["name"] == "Claude Code"
+        assert topics_ms[1]["name"] == "プロンプトキャッシュ"
+
+    def test_build_properties_empty_topics(self, notion_client, sample_article):
+        """topics が空の場合は Topics プロパティが含まれないこと"""
+        result = TranslationResult(
+            original=sample_article,
+            japanese_title="テスト",
+            japanese_content="テスト",
+            topics=[],
+        )
+        props = notion_client._build_properties(result, score=None)
+
+        assert "Topics" not in props
 
     def test_build_properties_no_score(self, notion_client, sample_translation):
         """Score なしでプロパティ構築"""
@@ -120,6 +144,52 @@ class TestTextObjUrlValidation:
         assert "link" not in obj["text"]
 
 
+class TestTopicsPropertyDetection:
+    """Topics プロパティの有無検出テスト"""
+
+    def test_check_access_detects_topics_property(self, notion_client):
+        """check_access が Topics プロパティの存在を検出すること"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.retrieve.return_value = {
+            "title": [{"plain_text": "Medium DB"}],
+            "properties": {
+                "名前": {"type": "title"},
+                "Topics": {"type": "multi_select"},
+            },
+        }
+        notion_client.check_access()
+
+        assert notion_client._has_topics_property is True
+
+    def test_check_access_detects_missing_topics_property(self, notion_client):
+        """check_access が Topics プロパティ未設定を検出すること"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.retrieve.return_value = {
+            "title": [{"plain_text": "Medium DB"}],
+            "properties": {
+                "名前": {"type": "title"},
+            },
+        }
+        notion_client.check_access()
+
+        assert notion_client._has_topics_property is False
+
+    def test_build_properties_skips_topics_when_not_in_schema(self, notion_client, sample_translation):
+        """DB に Topics がない場合は properties に含めないこと"""
+        notion_client._has_topics_property = False
+        props = notion_client._build_properties(sample_translation, score=8)
+
+        assert "Topics" not in props
+
+    def test_build_properties_includes_topics_when_in_schema(self, notion_client, sample_translation):
+        """DB に Topics がある場合は properties に含めること"""
+        notion_client._has_topics_property = True
+        props = notion_client._build_properties(sample_translation, score=8)
+
+        assert "Topics" in props
+        assert len(props["Topics"]["multi_select"]) == 4
+
+
 class TestNotionAPIDataSource:
     """Notion API data_sources 移行のテスト"""
 
@@ -191,3 +261,65 @@ class TestNotionAPIDataSource:
         call_kwargs = mock_sdk.pages.create.call_args[1]
         assert "data_source_id" in call_kwargs["parent"]
         assert call_kwargs["parent"]["data_source_id"] == notion_client.database_id
+
+
+class TestListExistingTopics:
+    def test_list_existing_topics_returns_unique_sorted(self, notion_client):
+        """DB 内の Topics を重複排除してソート済みで返すこと"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.query.return_value = {
+            "results": [
+                {
+                    "properties": {
+                        "Topics": {
+                            "multi_select": [
+                                {"name": "Kubernetes"},
+                                {"name": "モジューラーモノリス"},
+                            ]
+                        }
+                    }
+                },
+                {
+                    "properties": {
+                        "Topics": {
+                            "multi_select": [
+                                {"name": "Kubernetes"},
+                                {"name": "運用負荷"},
+                            ]
+                        }
+                    }
+                },
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        }
+        topics = notion_client.list_existing_topics()
+
+        assert topics == sorted(["Kubernetes", "モジューラーモノリス", "運用負荷"])
+        mock_sdk.data_sources.query.assert_called_once()
+
+    def test_list_existing_topics_empty_db(self, notion_client):
+        """DB が空の場合に空リストを返すこと"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.query.return_value = {
+            "results": [],
+            "has_more": False,
+            "next_cursor": None,
+        }
+        topics = notion_client.list_existing_topics()
+
+        assert topics == []
+
+    def test_list_existing_topics_no_topics_property(self, notion_client):
+        """Topics プロパティがないページでもエラーにならないこと"""
+        mock_sdk = notion_client.client
+        mock_sdk.data_sources.query.return_value = {
+            "results": [
+                {"properties": {"名前": {"title": [{"plain_text": "記事"}]}}},
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        }
+        topics = notion_client.list_existing_topics()
+
+        assert topics == []

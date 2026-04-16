@@ -45,6 +45,7 @@ METADATA_PROMPT = textwrap.dedent("""\
     {{
       "japanese_title": "日本語タイトル",
       "categories": ["カテゴリ1", "カテゴリ2"],
+      "topics": ["トピック1", "トピック2", "..."],
       "summary": {{
         "overview": "記事全体の要旨を2〜3文で簡潔にまとめる",
         "learnings": "この記事から学べる新しい知見・新規性を箇条書き（各項目1文）で2〜3点",
@@ -56,6 +57,15 @@ METADATA_PROMPT = textwrap.dedent("""\
     japanese_title のルール:
     - 記事タイトルを自然な日本語に翻訳する
     - 技術用語（Claude Code, API, Web3 等の固有名詞）は英語のまま残す
+
+    topics のルール:
+    - 記事の内容から検索用キーワードを 8〜15個 抽出する
+    - 技術用語（5〜10個）: フレームワーク、ライブラリ、パターン名、プロトコル等
+    - 業務・組織観点のキーワード（2〜5個）: 運用負荷、チーム分割、コスト最適化等
+    - 表記ルール:
+      - 製品名・プロトコル名・略語は英語のまま（例: Kubernetes, gRPC, ACID, CI/CD）
+      - 概念・方法論・業務課題は日本語（例: モジューラーモノリス, 分散トレーシング, 運用負荷）
+    - 下記の「既存 Topics 一覧」に同じ概念があれば、既存の表記を優先的に使うこと
 
     summary の各フィールドのルール:
     - overview: 「何についての記事で、結論は何か」を簡潔に
@@ -79,6 +89,9 @@ METADATA_PROMPT = textwrap.dedent("""\
 
     ---
 
+    既存 Topics 一覧（同じ概念は既存の表記を優先すること）:
+    {existing_topics}
+
     過去に読んだ記事一覧（Notion DB に登録済み）:
     {existing_articles}
 """)
@@ -96,6 +109,7 @@ class TranslationService:
         self,
         article: MediumArticle,
         existing_articles: list[dict] | None = None,
+        existing_topics: list[str] | None = None,
     ) -> TranslationResult:
         """記事を日本語に翻訳（2ステップ）"""
         log.step(f"記事を翻訳中: 「{article.title}」({article.char_count}文字)")
@@ -113,10 +127,10 @@ class TranslationService:
 
         log.success(f"翻訳完了 ({len(translated_content)} 文字)")
 
-        # === Step 2: タイトル翻訳・カテゴリ・構造化要約を抽出 ===
-        log.step("[Step 2/2] タイトル翻訳・カテゴリ・要約を抽出中...")
-        japanese_title, categories, summary = self._extract_metadata(
-            article, existing_articles or []
+        # === Step 2: タイトル翻訳・カテゴリ・構造化要約・Topics を抽出 ===
+        log.step("[Step 2/2] タイトル翻訳・カテゴリ・要約・Topics を抽出中...")
+        japanese_title, categories, summary, topics = self._extract_metadata(
+            article, existing_articles or [], existing_topics or []
         )
 
         # 日英併記タイトル: 「日本語タイトル | English Title」
@@ -130,11 +144,12 @@ class TranslationService:
             japanese_title=display_title,
             japanese_content=translated_content,
             categories=categories,
+            topics=topics,
             summary=summary,
         )
 
         log.success(
-            f"完了: タイトル=「{display_title}」, カテゴリ={categories}"
+            f"完了: タイトル=「{display_title}」, カテゴリ={categories}, Topics={len(topics)}件"
         )
         return result
 
@@ -173,8 +188,9 @@ class TranslationService:
         self,
         article: MediumArticle,
         existing_articles: list[dict],
-    ) -> tuple[str | None, list[str], str | None]:
-        """タイトル翻訳・カテゴリ・構造化要約を抽出"""
+        existing_topics: list[str],
+    ) -> tuple[str | None, list[str], str | None, list[str]]:
+        """タイトル翻訳・カテゴリ・構造化要約・トピックスを抽出"""
         # 既存記事一覧をフォーマット
         if existing_articles:
             articles_text = "\n".join(
@@ -184,9 +200,16 @@ class TranslationService:
         else:
             articles_text = "（まだ登録された記事はありません）"
 
+        # 既存 Topics をフォーマット（最大200件）
+        if existing_topics:
+            topics_text = ", ".join(existing_topics[:200])
+        else:
+            topics_text = "（まだ登録された Topics はありません）"
+
         prompt = METADATA_PROMPT.format(
             title=article.title,
             content_preview=article.content[:3000],
+            existing_topics=topics_text,
             existing_articles=articles_text,
         )
 
@@ -196,6 +219,7 @@ class TranslationService:
             if data:
                 japanese_title = data.get("japanese_title", "")
                 categories = data.get("categories", [])
+                topics = data.get("topics", [])
                 summary_data = data.get("summary", {})
 
                 # 構造化要約をマークダウン文字列に変換
@@ -204,11 +228,11 @@ class TranslationService:
                 else:
                     summary = str(summary_data)
 
-                return japanese_title, categories, summary
+                return japanese_title, categories, summary, topics
         except Exception as e:
             log.warn(f"メタデータ抽出に失敗（翻訳は成功済み）: {e}")
 
-        return None, [], None
+        return None, [], None, []
 
     @staticmethod
     def _format_structured_summary(data: dict) -> str:

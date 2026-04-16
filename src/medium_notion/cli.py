@@ -194,9 +194,16 @@ async def _translate(url: str, score: int | None, headless: bool | None):
     # 5. 既存記事インデックスの読み込み
     existing_articles = _load_article_index(config)
 
+    # 5.5 既存 Topics の取得
+    existing_topics = notion.list_existing_topics()
+
     # 6. 翻訳
     translator = TranslationService(config)
-    result = translator.translate_article(article, existing_articles=existing_articles)
+    result = translator.translate_article(
+        article,
+        existing_articles=existing_articles,
+        existing_topics=existing_topics,
+    )
 
     # 7. Notion に追加
     page = notion.create_page(result, score=score)
@@ -215,6 +222,7 @@ def _show_result(result, page):
     console.print()
     console.print(f"  [bold]タイトル[/bold]  {result.japanese_title}")
     console.print(f"  [bold]カテゴリ[/bold]  {', '.join(result.categories) if result.categories else '-'}")
+    console.print(f"  [bold]Topics[/bold]   {', '.join(result.topics) if result.topics else '-'}")
     if result.summary:
         summary = result.summary[:120] + "..." if len(result.summary) > 120 else result.summary
         console.print(f"  [bold]要約[/bold]    {summary}")
@@ -246,6 +254,7 @@ def _append_to_index(config: Config, result) -> None:
         articles.append({
             "title": result.japanese_title,
             "categories": result.categories,
+            "topics": result.topics,
             "url": result.original.url,
         })
         config.index_path.write_text(
@@ -367,6 +376,7 @@ async def _batch_translate(
     existing_urls = {a.get("url") for a in existing_articles}
     notion_urls = notion.list_existing_urls()
     existing_urls |= notion_urls
+    existing_topics = notion.list_existing_topics()
 
     # 結果記録
     successes: list[tuple[str, str]] = []   # (url, title)
@@ -403,7 +413,9 @@ async def _batch_translate(
 
                 # 翻訳
                 result = translator.translate_article(
-                    article, existing_articles=existing_articles
+                    article,
+                    existing_articles=existing_articles,
+                    existing_topics=existing_topics,
                 )
 
                 # Notion に追加
@@ -413,6 +425,7 @@ async def _batch_translate(
                 existing_articles.append({
                     "title": result.japanese_title,
                     "categories": result.categories,
+                    "topics": result.topics,
                     "url": url,
                 })
                 existing_urls.add(url)
@@ -697,6 +710,7 @@ async def _bookmark_run(
     existing_articles = _load_article_index(config)
     existing_urls = {a.get("url") for a in existing_articles}
     existing_urls |= notion.list_existing_urls()
+    existing_topics = notion.list_existing_topics()
 
     # ── ブラウザ初期化（全フェーズで共有） ──
     browser = BrowserClient(config)
@@ -781,7 +795,9 @@ async def _bookmark_run(
 
                     # 翻訳
                     result = translator.translate_article(
-                        article, existing_articles=existing_articles
+                        article,
+                        existing_articles=existing_articles,
+                        existing_topics=existing_topics,
                     )
 
                     # Notion に追加
@@ -791,6 +807,7 @@ async def _bookmark_run(
                     existing_articles.append({
                         "title": result.japanese_title,
                         "categories": result.categories,
+                        "topics": result.topics,
                         "url": url,
                     })
                     existing_urls.add(url)

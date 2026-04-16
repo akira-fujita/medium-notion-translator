@@ -34,6 +34,7 @@ class TranslationResult:
     japanese_title: str
     japanese_content: str
     categories: list[str] = field(default_factory=list)
+    topics: list[str] = field(default_factory=list)
     summary: Optional[str] = None
 
     @property

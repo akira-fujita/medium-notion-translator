@@ -46,5 +46,6 @@ def sample_translation(sample_article):
             "重要な発見は、プロンプトキャッシュを効果的に使用することでした。"
         ),
         categories=["AI", "Development"],
+        topics=["Claude Code", "プロンプトキャッシュ", "コスト最適化", "API"],
         summary="Claude Code のコスト削減手法。プロンプトキャッシュの活用で40%のコスト削減を実現。",
     )
