@@ -325,7 +325,7 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 |------------|------|------|
 | `名前` | title | 日英併記タイトル |
 | `URL` | url | 元記事の URL |
-| `read date` | date | 翻訳実行日 |
+| `create date` | date | ページ作成日（翻訳実行日） |
 | `Categories` | multi_select | 自動分類カテゴリ |
 | `Score` | number | ユーザー指定スコア（1-10、任意） |
 
@@ -393,7 +393,7 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 
 **既存記事一覧取得** (`list_articles`):
 - Notion DB をページネーション（100件ずつ）で全件取得
-- `read date` の降順でソート
+- `create date` の降順でソート
 - タイトルとカテゴリを返す
 
 ### 3.5 config.py — 設定管理
@@ -580,7 +580,7 @@ Medium の DOM 構造は頻繁に変わる。特定の CSS クラスや data-tes
 |------------|----------|--------|
 | `名前` | Title | 自動（日英併記タイトル） |
 | `URL` | URL | 自動（元記事 URL） |
-| `read date` | Date | 自動（実行日） |
+| `create date` | Date | 自動（ページ作成日 = 翻訳実行日） |
 | `Categories` | Multi-select | 自動（AI 分類） |
 | `Score` | Number | 手動（`-s` オプション） |
 

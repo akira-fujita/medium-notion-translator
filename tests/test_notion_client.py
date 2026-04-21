@@ -28,8 +28,8 @@ class TestNotionClient:
         # URL
         assert props["URL"]["url"] == sample_translation.original.url
 
-        # read date
-        assert props["read date"]["date"]["start"] == date.today().isoformat()
+        # create date
+        assert props["create date"]["date"]["start"] == date.today().isoformat()
 
         # Categories
         assert len(props["Categories"]["multi_select"]) == 2

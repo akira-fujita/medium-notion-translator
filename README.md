@@ -181,7 +181,7 @@ medium-notion -h
 | URL | URL | 元の Medium 記事 URL（自動） |
 | Categories | Multi-select | AI, LLM, Web3 等のカテゴリ（自動） |
 | Score | Number | 記事のスコア 1-10（`-s` で手動指定） |
-| read date | Date | 翻訳実行日（自動） |
+| create date | Date | ページ作成日（翻訳実行日、自動） |
 
 ## Notion ページの構成
 

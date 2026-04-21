@@ -113,7 +113,7 @@ class NotionClient:
                 params = {
                     "data_source_id": self.database_id,
                     "page_size": 100,
-                    "sorts": [{"property": "read date", "direction": "descending"}],
+                    "sorts": [{"property": "create date", "direction": "descending"}],
                 }
                 if start_cursor:
                     params["start_cursor"] = start_cursor
@@ -252,8 +252,8 @@ class NotionClient:
             },
             # URL（元記事）
             "URL": {"url": result.original.url},
-            # read date（今日の日付）
-            "read date": {"date": {"start": date.today().isoformat()}},
+            # create date（ページ作成日 = 翻訳登録日）
+            "create date": {"date": {"start": date.today().isoformat()}},
         }
 
         # Categories（multi-select）
