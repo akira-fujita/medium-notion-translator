@@ -40,3 +40,6 @@ Thumbs.db
 # Claude Code — share slash commands with the repo, keep personal settings private
 !.claude/
 .claude/settings.local.json
+
+# Medium custom-list URL cache (auto-populated)
+.medium-list-cache.json
