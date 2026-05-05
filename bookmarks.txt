@@ -1,4 +1,6 @@
-# Medium「toNotion」(2026-02-17 取得, 1件)
+# Medium「toNotion」(2026-05-05 取得, 3件)
 # 処理済みの記事は batch 実行時に自動スキップされます
 
-# https://medium.com/coding-nexus/99-of-developers-dont-know-how-to-use-coding-agents-well-9256e3c02e16  (処理済み)
+# https://medium.com/@garejakirit/20-powerful-free-apis-every-developer-should-use-in-2026-with-urls-examples-deep-use-cases-b78009908a4b  (処理済み)
+# https://medium.com/gitconnected/claude-code-best-practices-12-patterns-agentic-engineers-use-65264e3eb919  (処理済み)
+# https://medium.com/gitconnected/building-a-senior-staff-engineer-with-sub-agent-teams-in-claude-code-771298151392  (処理済み)

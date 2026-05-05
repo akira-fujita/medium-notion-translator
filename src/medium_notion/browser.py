@@ -36,6 +36,61 @@ PAYWALL_INDICATORS = [
     "subscribe to read",
 ]
 
+# Cloudflare チャレンジページの title パターン
+# Cloudflare は Accept-Language に応じて文言を翻訳して返すので、日本語版も含める
+_CLOUDFLARE_TITLE_PATTERNS = (
+    "just a moment",
+    "attention required",
+    "checking your browser",
+    "cloudflare",
+    "しばらくお待ちください",
+    "お待ちください",
+)
+
+
+def _is_cloudflare_challenge(title: str | None) -> bool:
+    """ページ title から Cloudflare のインタースティシャル画面かどうかを判定する"""
+    if not title:
+        return False
+    lowered = title.lower()
+    return any(pattern in lowered for pattern in _CLOUDFLARE_TITLE_PATTERNS)
+
+
+def _strip_tracking_query(url: str) -> str:
+    """URL からトラッキング目的のクエリ (`?source=...` 等) を除去する。
+
+    Medium の「ライブラリ → リスト」遷移では `?source=my_lists---...` が付くが、
+    リスト本体の同定には不要で、キャッシュとしては正規 URL の方が安定する。
+    """
+    if "?" not in url:
+        return url
+    return url.split("?", 1)[0]
+
+
+def _load_list_url_cache(cache_path: Path) -> dict[str, str]:
+    """カスタムリスト名 → 正規 URL のキャッシュを読み込む。
+
+    存在しない / 壊れている場合は空 dict を返す（自己回復）。
+    """
+    if not cache_path.exists():
+        return {}
+    try:
+        data = json.loads(cache_path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_list_url(cache_path: Path, list_name: str, url: str) -> None:
+    """カスタムリスト名 → 正規 URL をキャッシュに保存する（既存 entry はマージ）。
+
+    `/me/lists` を経由して URL を発見するフローは Cloudflare に scraping パターンと
+    して検出されることがあるため、一度発見した URL は次回以降に直接 goto する。
+    """
+    cache = _load_list_url_cache(cache_path)
+    cache[list_name] = _strip_tracking_query(url)
+    cache_path.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+
 
 class BrowserClient:
     """Playwright を使って Medium 記事を取得するクライアント"""
@@ -43,6 +98,7 @@ class BrowserClient:
     def __init__(self, config: Config):
         self.config = config
         self.session_path = config.session_path
+        self.list_url_cache_path = config.session_path.parent / ".medium-list-cache.json"
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
@@ -60,32 +116,63 @@ class BrowserClient:
             ],
         )
 
-        context_options = {
+        # 保存済みセッションを読み込み
+        storage_state = None
+        if self.session_path.exists():
+            try:
+                storage_state = json.loads(self.session_path.read_text())
+                log.step("保存済みセッションを読み込みました")
+            except Exception:
+                log.warn("セッションファイルの読み込みに失敗。新規セッションを使用します")
+
+        self._context = await self._browser.new_context(
+            **self._build_context_options(storage_state)
+        )
+        self._page = await self._context.new_page()
+
+    def _build_context_options(self, storage_state: dict | None = None) -> dict:
+        """new_context() に渡すオプションを構築する（共通化のため抽出）"""
+        opts = {
             "viewport": {"width": 1280, "height": 720},
             "user_agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
+            # Cloudflare は IP の地域とブラウザの locale/timezone の整合性も見ている
+            "locale": "ja-JP",
+            "timezone_id": "Asia/Tokyo",
         }
+        if storage_state is not None:
+            opts["storage_state"] = storage_state
+        return opts
 
-        # 保存済みセッションを読み込み
+    async def _refresh_context(self) -> None:
+        """現在のコンテキストを閉じて、同じオプションで新しいコンテキストを作り直す。
+
+        ヘッドレス時に Medium のリストページを閲覧した後、Cloudflare がそのコンテキスト
+        を bot として flag する挙動が観測されたため、リスト取得後に context を一度
+        破棄して fresh な状態で記事ページにアクセスする。
+
+        重要: 引き継ぐ storage_state は **ディスクに保存された session.json**
+        （ログイン時点の状態）であり、ランタイム中に蓄積した cookies は捨てる。
+        Cloudflare が付与する `cf_clearance` 等の flag cookie を引き継ぐと意味がない。
+        """
+        if not self._browser or not self._context:
+            return
+        # 元の session.json を再ロード（ランタイム蓄積 cookie は破棄）
+        storage_state = None
         if self.session_path.exists():
             try:
-                session_data = json.loads(self.session_path.read_text())
-                context_options["storage_state"] = session_data
-                log.step("保存済みセッションを読み込みました")
+                storage_state = json.loads(self.session_path.read_text())
             except Exception:
-                log.warn("セッションファイルの読み込みに失敗。新規セッションを使用します")
-
-        self._context = await self._browser.new_context(**context_options)
-
-        # bot 検出回避
-        await self._context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        """)
-
+                pass
+        await self._context.close()
+        self._context = await self._browser.new_context(
+            **self._build_context_options(storage_state)
+        )
         self._page = await self._context.new_page()
+        log.step("ブラウザコンテキストを再生成しました（Cloudflare 回避）")
 
     async def ensure_login(self) -> bool:
         """Medium にログインしているか確認。未ログインなら手動ログインを促す（GUIモード専用）"""
@@ -158,6 +245,12 @@ class BrowserClient:
                 "  → 先に `medium-notion login` を実行してログインしてください。"
             )
         log.step("保存済みセッションを使用")
+
+        # ヘッドレスでは記事ごとに context をリフレッシュする。
+        # 同一 context で複数 Medium ページを叩くと Cloudflare に bot 判定されるため、
+        # 各記事を「最初の 1 リクエスト」として扱うのが最も安定する。
+        if self.config.headless:
+            await self._refresh_context()
 
         # 記事ページにアクセス
         response = await self._page.goto(url, wait_until="domcontentloaded")
@@ -584,6 +677,46 @@ class BrowserClient:
         except Exception as e:
             log.warn(f"セッション保存に失敗: {e}")
 
+    async def _wait_past_cloudflare(self, timeout_ms: int = 30_000) -> bool:
+        """Cloudflare のインタースティシャル画面が出ていたら通過するまで待つ
+
+        Returns:
+            通過できた場合 True、タイムアウト時は False（呼び出し側は処理を継続）
+        """
+        if not self._page:
+            return False
+
+        title = await self._page.title()
+        if not _is_cloudflare_challenge(title):
+            return True
+
+        log.warn(
+            f"Cloudflare チャレンジを検出: title='{title}' — 通過待ち（最大 {timeout_ms // 1000} 秒）"
+        )
+
+        # title が変わるか、タイムアウトするまでポーリング
+        elapsed = 0
+        poll_ms = 1000
+        while elapsed < timeout_ms:
+            await self._page.wait_for_timeout(poll_ms)
+            elapsed += poll_ms
+            try:
+                current_title = await self._page.title()
+            except Exception:
+                continue
+            if not _is_cloudflare_challenge(current_title):
+                log.success(
+                    f"Cloudflare 通過: title='{current_title}' (経過 {elapsed // 1000}s)"
+                )
+                return True
+
+        log.warn(
+            f"Cloudflare チャレンジが {timeout_ms // 1000} 秒以内に通過しませんでした。"
+            "—\n  → セッション切れか、IP/UA がブロックされている可能性があります。"
+            " GUI モード (--gui) で再試行してください。"
+        )
+        return False
+
     async def fetch_reading_list(self, list_name: str = "Reading list") -> list[str]:
         """Medium のリストから記事 URL 一覧を取得
 
@@ -604,15 +737,30 @@ class BrowserClient:
 
         log.step(f"Medium のリスト「{list_name}」を取得中...")
 
+        # キャッシュ済みのカスタムリスト URL があれば直接 goto する。
+        # /me/lists 経由は Cloudflare に scraping パターンとして検出されることがあり、
+        # 一度発見した URL を直接叩く方が安定する。
+        cached_url: str | None = None
+        if list_name.lower() != "reading list":
+            cache = _load_list_url_cache(self.list_url_cache_path)
+            cached_url = cache.get(list_name)
+            if cached_url:
+                log.step(f"キャッシュ済みリスト URL を使用: {cached_url}")
+
         # リストページへの遷移
         if list_name.lower() == "reading list":
-            # デフォルトの reading-list は直接 URL でアクセス
             response = await self._page.goto(
                 "https://medium.com/me/list/reading-list",
                 wait_until="domcontentloaded",
             )
+        elif cached_url:
+            # 直接 goto。これで /me/lists を経由しない
+            response = await self._page.goto(
+                cached_url,
+                wait_until="domcontentloaded",
+            )
         else:
-            # カスタムリストはライブラリページから探す
+            # キャッシュなし: ライブラリページから探す
             response = await self._page.goto(
                 "https://medium.com/me/lists",
                 wait_until="domcontentloaded",
@@ -629,6 +777,10 @@ class BrowserClient:
             await self._page.wait_for_load_state("networkidle", timeout=15000)
         except Exception:
             log.warn("networkidle タイムアウト — 読み込み完了前に続行します")
+
+        # Cloudflare チャレンジを検出したら通過するまで待つ
+        # JS チャレンジは通常 5〜10 秒で完了するので、最大 30 秒見る
+        await self._wait_past_cloudflare(timeout_ms=30_000)
 
         # ページ検証: ログイン済みか
         page_check = await self._page.evaluate("""
@@ -647,31 +799,49 @@ class BrowserClient:
                 "  → `medium-notion login` で再ログインしてください。"
             )
 
-        # カスタムリストの場合: ライブラリページからリスト名を探してクリック
-        if list_name.lower() != "reading list":
+        # キャッシュ未使用のカスタムリストはライブラリページから探してクリック
+        if list_name.lower() != "reading list" and not cached_url:
             await self._navigate_to_custom_list(list_name)
+            # ライブラリ経由で見つけた URL を次回以降のためキャッシュに保存
+            try:
+                discovered_url = await self._page.evaluate("window.location.href")
+                if discovered_url and "/list/" in discovered_url:
+                    _save_list_url(
+                        self.list_url_cache_path, list_name, discovered_url
+                    )
+                    log.step(
+                        f"次回用にリスト URL をキャッシュ: {_strip_tracking_query(discovered_url)}"
+                    )
+            except Exception as e:
+                log.warn(f"リスト URL のキャッシュ保存に失敗: {e}")
+            await self._wait_past_cloudflare(timeout_ms=30_000)
 
-        # 無限スクロールで全記事を読み込み
-        log.step("スクロールして全記事を読み込み中...")
-        prev_height = 0
-        scroll_attempts = 0
-        max_scroll_attempts = 50  # 安全弁
-
-        while scroll_attempts < max_scroll_attempts:
-            current_height = await self._page.evaluate(
-                "document.body.scrollHeight"
-            )
-            if current_height == prev_height:
-                break  # これ以上コンテンツがない
-            prev_height = current_height
-            await self._page.evaluate(
-                "window.scrollTo(0, document.body.scrollHeight)"
-            )
-            await self._page.wait_for_timeout(1500)
-            scroll_attempts += 1
-
-        if scroll_attempts > 0:
-            log.step(f"スクロール完了（{scroll_attempts} 回）")
+        # NOTE: 以前は無限スクロールで全記事をロードしていたが、ヘッドレス時に
+        # スクロール操作が Cloudflare の bot 検出に引っかかり、その後の記事ページ
+        # アクセスが 403 になる問題が判明。短いリスト（処理対象が常に少数）の
+        # ユースケースでは初期 DOM に全件含まれるため、スクロールは省略する。
+        # 大量のアイテムを抱えるリストは複数回の実行で順次処理する運用とする。
+        if self.config.headless:
+            log.step("ヘッドレスではスクロールを省略（Cloudflare 回避）")
+        else:
+            # GUI モードのみ従来どおりスクロールで lazy-load を吸収
+            prev_height = 0
+            scroll_attempts = 0
+            max_scroll_attempts = 50
+            while scroll_attempts < max_scroll_attempts:
+                current_height = await self._page.evaluate(
+                    "document.body.scrollHeight"
+                )
+                if current_height == prev_height:
+                    break
+                prev_height = current_height
+                await self._page.evaluate(
+                    "window.scrollTo(0, document.body.scrollHeight)"
+                )
+                await self._page.wait_for_timeout(1500)
+                scroll_attempts += 1
+            if scroll_attempts > 0:
+                log.step(f"スクロール完了（{scroll_attempts} 回）")
 
         # ページトップに戻る
         await self._page.evaluate("window.scrollTo(0, 0)")
@@ -782,6 +952,13 @@ class BrowserClient:
                 log.warn(f"  サンプルリンク: {debug_info.get('sampleLinks', [])[:10]}")
 
         log.success(f"リスト「{list_name}」から {len(urls)} 件の記事 URL を取得しました")
+
+        # ヘッドレスでリストページを閲覧した後、Cloudflare がコンテキストを flag して
+        # 後続の記事ページアクセスが 403 になるため、URL 取得が完了したら context を
+        # 破棄して fresh な状態に戻す（記事ページ取得が成功するように）
+        if self.config.headless and urls:
+            await self._refresh_context()
+
         return urls
 
     async def _navigate_to_custom_list(self, list_name: str) -> None:
@@ -897,6 +1074,11 @@ class BrowserClient:
 
         log.step(f"リスト「{list_name}」から {len(urls_to_remove)} 件の記事を削除中...")
 
+        # ヘッドレスでは直前の記事取得で蓄積した Cloudflare flag をリセットしてから
+        # ライブラリページに遷移する（フレッシュなコンテキストで開始）
+        if self.config.headless:
+            await self._refresh_context()
+
         # リスト名を保持（_remove_single_article で参照）
         self._current_list_name = list_name
 
@@ -904,6 +1086,10 @@ class BrowserClient:
         failed: list[str] = []
 
         for i, url in enumerate(urls_to_remove):
+            # ヘッドレスでは前回のクリック試行で生まれた popover/Cloudflare 状態が
+            # 次の iteration に持ち越されることがあるので、毎回 context をリフレッシュ
+            if self.config.headless:
+                await self._refresh_context()
             # 毎回リストページに遷移して DOM を最新にする
             # （前の記事の削除で DOM が変わるため）
             await self._navigate_to_list_page(list_name)
@@ -942,15 +1128,22 @@ class BrowserClient:
                 wait_until="domcontentloaded",
             )
         else:
-            await self._page.goto(
-                "https://medium.com/me/lists",
-                wait_until="domcontentloaded",
-            )
-            try:
-                await self._page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
-            await self._navigate_to_custom_list(list_name)
+            # キャッシュ済みなら /me/lists を経由せず直接 goto
+            # （Cloudflare の scraping 検出を避けるため）
+            cache = _load_list_url_cache(self.list_url_cache_path)
+            cached_url = cache.get(list_name)
+            if cached_url:
+                await self._page.goto(cached_url, wait_until="domcontentloaded")
+            else:
+                await self._page.goto(
+                    "https://medium.com/me/lists",
+                    wait_until="domcontentloaded",
+                )
+                try:
+                    await self._page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+                await self._navigate_to_custom_list(list_name)
 
         try:
             await self._page.wait_for_load_state("networkidle", timeout=15000)
@@ -958,7 +1151,13 @@ class BrowserClient:
             pass
 
     async def _scroll_to_load_all(self) -> None:
-        """無限スクロールで全コンテンツを読み込む"""
+        """無限スクロールで全コンテンツを読み込む
+
+        ヘッドレス時はスクロール操作が Cloudflare の bot 検出を引き起こすため省略する
+        （短いリスト前提）。
+        """
+        if self.config.headless:
+            return
         prev_height = 0
         for _ in range(50):
             current_height = await self._page.evaluate("document.body.scrollHeight")
@@ -1087,17 +1286,137 @@ class BrowserClient:
             return False
 
         log.step(f"ブックマークボタンをクリック: {bookmark_btn.get('label', '')}")
-        await self._page.mouse.click(bookmark_btn["x"], bookmark_btn["y"])
-        await self._page.wait_for_timeout(2000)
+        # Playwright の Locator.click() は CDP を経由して isTrusted=true なクリックを生成する。
+        # JS 内の dispatchEvent / element.click() は isTrusted=false で
+        # Medium の popover 表示ロジックを通らないことがあるため、ここは
+        # ElementHandle 経由で .click() を呼ぶのが筋。
+        clicked_via_handle = False
+        try:
+            handle = await self._page.evaluate_handle(
+                """
+                (urlPath) => {
+                    const links = [...document.querySelectorAll('a[href]')];
+                    for (const link of links) {
+                        try {
+                            const linkUrl = new URL(link.href);
+                            if (linkUrl.pathname !== urlPath) continue;
+                            let card = link;
+                            for (let i = 0; i < 15; i++) {
+                                if (!card.parentElement) break;
+                                card = card.parentElement;
+                                const hasMultipleLinks =
+                                    card.querySelectorAll('a[href]').length >= 2;
+                                const hasButton = card.querySelector('button');
+                                if (hasMultipleLinks && hasButton
+                                    && card.offsetHeight > 80
+                                    && card.offsetHeight < 600) break;
+                            }
+                            const buttons = [...card.querySelectorAll('button')];
+                            const labelMatch = buttons.find(b => {
+                                const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+                                return lbl.includes('bookmark') || lbl.includes('save')
+                                    || lbl.includes('list');
+                            });
+                            const svgMatch = buttons.find(b => {
+                                const r = b.getBoundingClientRect();
+                                return b.querySelector('svg')
+                                    && r.width > 0 && r.width < 60
+                                    && r.height > 0 && r.height < 60;
+                            });
+                            return labelMatch || svgMatch || null;
+                        } catch {}
+                    }
+                    return null;
+                }
+                """,
+                url_path,
+            )
+            element = handle.as_element()
+            if element:
+                await element.scroll_into_view_if_needed()
+                await element.click(timeout=5000)
+                clicked_via_handle = True
+                await handle.dispose()
+            else:
+                await handle.dispose()
+        except Exception as e:
+            log.warn(f"ElementHandle クリックに失敗、座標クリックにフォールバック: {e}")
+
+        if not clicked_via_handle:
+            # フォールバック: 座標ベースのクリック（trusted ではない）
+            await self._page.mouse.move(bookmark_btn["x"], bookmark_btn["y"])
+            await self._page.wait_for_timeout(150)
+            await self._page.mouse.click(bookmark_btn["x"], bookmark_btn["y"])
+
+        # ヘッドレスでは popover アニメーション完了に時間がかかるため長めに待つ
+        wait_ms = 5000 if self.config.headless else 2000
+        await self._page.wait_for_timeout(wait_ms)
 
         # Step 3: リストピッカー内でチェック済みの対象リストをクリックしてトグル OFF
         toggled = await self._page.evaluate("""
             (listName) => {
                 const targetLower = listName.toLowerCase();
 
-                // ポップオーバー / オーバーレイを探す
-                const allEls = [...document.querySelectorAll('*')];
-                const overlays = allEls.filter(el => {
+                // 「リスト名と完全一致するテキストの可視要素」を popover 内で探す。
+                // 注意: 「リストページにいるとき」はページの H1 等にも同じテキストが
+                // 存在するため、単純な textContent 一致だと H1 をクリックしてしまい
+                // 削除されない。popover らしさ (positioned ancestor + 小サイズ + 非見出し)
+                // をフィルタとして付ける。
+                const isHeadingTag = (el) => {
+                    const t = (el.tagName || '').toLowerCase();
+                    return t === 'h1' || t === 'h2' || t === 'h3' || t === 'h4';
+                };
+                const hasPositionedAncestor = (el) => {
+                    let cur = el.parentElement;
+                    let depth = 0;
+                    while (cur && depth < 20) {
+                        const s = window.getComputedStyle(cur);
+                        if (s.position === 'fixed' || s.position === 'absolute') {
+                            const z = parseInt(s.zIndex) || 0;
+                            // popover は通常それなり以上の stacking context を持つ
+                            if (z >= 1 || s.position === 'fixed') return true;
+                        }
+                        cur = cur.parentElement;
+                        depth += 1;
+                    }
+                    return false;
+                };
+
+                // 候補を集めてスコアを付ける（popover エントリらしさ）
+                const candidates = [];
+                const allEls = [...document.querySelectorAll('div, li, label, span, button')];
+                for (const el of allEls) {
+                    const t = (el.textContent || '').trim();
+                    if (t !== listName && t.toLowerCase() !== targetLower) continue;
+                    if (!(el.offsetWidth > 0 && el.offsetHeight > 0)) continue;
+                    if (isHeadingTag(el)) continue;
+                    // 親に H1/H2/H3 があるなら除外（見出しの内側の span 等）
+                    if (el.closest && el.closest('h1,h2,h3,h4')) continue;
+                    const r = el.getBoundingClientRect();
+                    // popover エントリは小さい矩形 (高さ ~ 24-80 px、幅 ~ 100-500 px)
+                    if (r.height > 100 || r.width > 600) continue;
+                    if (!hasPositionedAncestor(el)) continue;
+                    candidates.push({ el, area: r.width * r.height });
+                }
+
+                // 最も小さい矩形 = popover の row 候補
+                candidates.sort((a, b) => a.area - b.area);
+                if (candidates.length > 0) {
+                    let row = candidates[0].el;
+                    // 4 階層上までクリック可能な行を探す
+                    for (let i = 0; i < 5; i++) {
+                        if (!row.parentElement) break;
+                        const r = row.getBoundingClientRect();
+                        if (r.height >= 24 && r.height <= 80
+                            && r.width >= 80 && r.width <= 500) break;
+                        row = row.parentElement;
+                    }
+                    row.click();
+                    return { clicked: true, via: 'popover-scoped', text: candidates[0].el.textContent?.trim() };
+                }
+
+                // 従来ロジック: オーバーレイから探す（後方互換）
+                const overlays = [...document.querySelectorAll('*')].filter(el => {
                     const style = window.getComputedStyle(el);
                     const zIndex = parseInt(style.zIndex) || 0;
                     const pos = style.position;

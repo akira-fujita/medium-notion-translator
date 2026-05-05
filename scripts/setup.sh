@@ -81,29 +81,36 @@ green "✓ logs/"
 # ── Step 4: Dock アプリをビルド ─────────────────────
 step "4/6" "Dock アプリをビルド"
 
-# AppleScript を現在のパスで生成
+# AppleScript を生成（実行時に project-dir.txt からパスを解決）
 APPLESCRIPT_TMP=$(mktemp /tmp/mnt-XXXXXX.applescript)
-cat > "$APPLESCRIPT_TMP" <<APPLESCRIPT
+cat > "$APPLESCRIPT_TMP" <<'APPLESCRIPT'
 -- Medium Notion Translator - Bookmark Runner
 -- Dock にドロップしてワンクリックで翻訳実行
+-- プロジェクトパスは Contents/Resources/project-dir.txt から実行時に解決
 
-set projectDir to "$PROJECT_DIR"
+set appPath to POSIX path of (path to me)
+set projectDir to do shell script "cat " & quoted form of (appPath & "Contents/Resources/project-dir.txt")
 set venvBin to projectDir & "/.venv/bin/medium-notion"
 set logFile to projectDir & "/logs/bookmark-run.log"
 
 tell application "Terminal"
 	activate
-	set newTab to do script "cd " & quoted form of projectDir & " && " & quoted form of venvBin & " bookmark -l toNotion --run --gui 2>&1 | tee " & quoted form of logFile & "; echo ''; echo '=== 完了 ==='; echo 'このウィンドウは閉じて構いません'"
+	set newTab to do script "source ~/.zshrc 2>/dev/null; cd " & quoted form of projectDir & " && " & quoted form of venvBin & " bookmark -l toNotion --run --gui 2>&1 | tee " & quoted form of logFile & "; echo ''; echo '=== 完了 ==='; echo 'このウィンドウは閉じて構いません'"
 end tell
 APPLESCRIPT
 
 osacompile -o "$APP_PATH" "$APPLESCRIPT_TMP"
 rm -f "$APPLESCRIPT_TMP"
 
+# プロジェクトパスを .app に書き込み（実行時に参照される）
+echo -n "$PROJECT_DIR" > "$APP_PATH/Contents/Resources/project-dir.txt"
+green "✓ プロジェクトパスを埋め込みました: $PROJECT_DIR"
+
 # カスタムアイコンを設定
 ICON_PATH="$PROJECT_DIR/scripts/AppIcon.icns"
 if [ -f "$ICON_PATH" ]; then
     cp "$ICON_PATH" "$APP_PATH/Contents/Resources/applet.icns"
+    rm -f "$APP_PATH/Contents/Resources/Assets.car"
     green "✓ カスタムアイコンを設定しました"
 fi
 

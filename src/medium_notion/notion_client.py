@@ -55,6 +55,51 @@ _LANGUAGE_ALIASES = {
 }
 
 
+def _split_paragraphs(content: str) -> list[str]:
+    """マークダウン本文をパラグラフに分割する。
+
+    単純な `content.split("\\n\\n")` だとコードブロック (```...```) 内の空行で
+    分断されてしまい、コードブロックの中身が「普通の段落」として処理されてしまう。
+    その結果:
+      - 目次にコード行が混入する
+      - 太字や箇条書きのマーカーがコード内なのに描画される
+      - ``` がリテラルでテキストに残る
+    を防ぐため、フェンスの開閉を line-by-line で追跡する。
+    """
+    paragraphs: list[str] = []
+    current: list[str] = []
+    in_code = False
+
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if in_code:
+                # フェンスを閉じる
+                current.append(line)
+                paragraphs.append("\n".join(current))
+                current = []
+                in_code = False
+            else:
+                # フェンスを開く前に通常段落を flush
+                if current:
+                    paragraphs.append("\n".join(current))
+                    current = []
+                current.append(line)
+                in_code = True
+        elif not in_code and stripped == "":
+            # 通常段落の空行 → 段落区切り
+            if current:
+                paragraphs.append("\n".join(current))
+                current = []
+        else:
+            current.append(line)
+
+    if current:
+        paragraphs.append("\n".join(current))
+
+    return paragraphs
+
+
 def _normalize_code_language(language: str) -> str:
     """コード言語名を Notion がサポートする名前に正規化する"""
     lang = language.strip().lower()
@@ -423,8 +468,8 @@ class NotionClient:
         # 翻訳本文
         blocks.append(self._heading_block("翻訳", level=2))
 
-        # 本文を段落ブロックに分割
-        paragraphs = result.japanese_content.split("\n\n")
+        # 本文を段落ブロックに分割（コードフェンス内の空行は段落区切りにしない）
+        paragraphs = _split_paragraphs(result.japanese_content)
         for para in paragraphs:
             para = para.strip()
             if not para:
@@ -438,14 +483,16 @@ class NotionClient:
             elif para.startswith("# "):
                 blocks.append(self._heading_block(para[2:], level=1))
             elif para.startswith("```"):
-                # コードブロック
-                code_content = para.strip("`").strip()
-                lang_end = code_content.find("\n")
-                if lang_end > 0:
-                    language = code_content[:lang_end].strip()
-                    code_content = code_content[lang_end + 1:]
+                # コードブロック: 1行目が ```language、最終行が ``` の体裁
+                code_lines = para.split("\n")
+                first = code_lines[0].lstrip("`").strip()
+                language = first if first else "plain text"
+                # 末尾フェンスを除去（閉じ忘れの場合は除去しない）
+                if len(code_lines) > 1 and code_lines[-1].strip() == "```":
+                    body_lines = code_lines[1:-1]
                 else:
-                    language = "plain text"
+                    body_lines = code_lines[1:]
+                code_content = "\n".join(body_lines)
                 language = _normalize_code_language(language)
                 for chunk in self._split_text(code_content, MAX_BLOCK_TEXT_LENGTH):
                     blocks.append(self._code_block(chunk, language))

@@ -155,6 +155,59 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 Slack Incoming Webhook は https://api.slack.com/messaging/webhooks で作成できます。
 未設定の場合、通知はスキップされます（他の機能に影響しません）。
 
+通知ルール:
+
+| 状況 | 通知 |
+|---|---|
+| 新規記事を処理した | ✅ 成功サマリーを送信 |
+| 一部記事で失敗があった | ✅ 失敗サマリーを送信 |
+| **致命的エラー（セッション切れ・認証失敗・依存ツール不在）** | 🚨 アラート通知を送信 |
+| 空振り（リスト空 / 全件処理済み） | 通知しない |
+
+致命的エラー通知は launchd 等での無人実行時に「気づいて手動対応する」ためのシグナル。
+内容を見て、必要に応じて `medium-notion login` でセッションを更新してください。
+
+### 日次自動実行（launchd）
+
+毎日決まった時刻にバックグラウンドでヘッドレス実行する設定が用意されています。
+朝 7:00 / 昼 13:00 / 夜 22:00 の 3 回スケジュールされており、Mac が起動しているタイミングで処理されます。
+
+セットアップ:
+
+```bash
+bash scripts/launchd/install.sh
+```
+
+これだけで `~/Library/LaunchAgents/com.akira.medium-bookmark.plist` が配置・ロードされます。
+
+確認・即時実行:
+
+```bash
+launchctl list | grep com.akira.medium-bookmark
+launchctl start com.akira.medium-bookmark   # 即時実行で動作確認
+tail -f logs/launchd-bookmark.log
+```
+
+アンインストール:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.akira.medium-bookmark.plist
+rm ~/Library/LaunchAgents/com.akira.medium-bookmark.plist
+```
+
+スリープ中の予定時刻に launchd が発火しなかった場合、復帰時に未実行分が実行されます（macOS の `StartCalendarInterval` の期待挙動。バージョンや状況によっては落ちることもあるため、3回スケジュールで冗長化しています）。
+
+完全シャットダウン状態からの自動起動も必要なら、別途以下も設定（充電中のみ動作）:
+
+```bash
+sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00
+```
+
+多重実行は安全に no-op になる設計です:
+- `run-daily.sh` 側で `mkdir` ベースの排他ロック（`logs/.run-daily.lock`）→ 重なった起動は即終了
+- 既存 URL は Notion 側 + ローカルインデックスで吸収され二重登録されない
+- 空振り（リスト空 / 全件処理済み）はサイレントに終了
+
 ### その他のコマンド
 
 ```bash

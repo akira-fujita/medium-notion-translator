@@ -39,6 +39,29 @@ def _is_fatal_error(error_message: str) -> bool:
     return any(pattern in error_message for pattern in _FATAL_ERROR_PATTERNS)
 
 
+async def _notify_fatal(
+    webhook_url: str | None,
+    error_type: str,
+    message: str,
+) -> None:
+    """致命的エラーを Slack に通知する（webhook 未設定なら no-op）
+
+    launchd 等の無人実行で、セッション切れ・認証失敗・依存ツール不在
+    などが起きたときにユーザーに気づかせるための経路。
+    """
+    if not webhook_url:
+        return
+    from .slack import notify_fatal_error
+    try:
+        await notify_fatal_error(
+            webhook_url=webhook_url,
+            error_type=error_type,
+            message=message,
+        )
+    except Exception as e:
+        log.warn(f"致命的エラー通知の送信中に例外: {e}")
+
+
 # -h でもヘルプを表示できるようにする
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -695,16 +718,27 @@ async def _bookmark_run(
 
     # Claude Code の確認（翻訳に必要）
     if not Config.check_claude_code():
-        console.print(
-            "[red]Claude Code CLI が見つかりません[/red]\n"
+        msg = (
+            "Claude Code CLI が見つかりません\n"
             "  → npm install -g @anthropic-ai/claude-code\n"
             "  → Max プランでログイン: claude login"
+        )
+        console.print(f"[red]{msg}[/red]")
+        await _notify_fatal(
+            config.slack_webhook_url,
+            error_type="ClaudeCodeCLIMissing",
+            message=msg,
         )
         sys.exit(1)
 
     # Notion 接続確認 + 既存 URL 取得
     notion = NotionClient(config)
     if not notion.check_access():
+        await _notify_fatal(
+            config.slack_webhook_url,
+            error_type="NotionAuthError",
+            message="Notion API への接続に失敗しました。NOTION_API_KEY と NOTION_DATABASE_ID を確認してください。",
+        )
         sys.exit(1)
 
     existing_articles = _load_article_index(config)
@@ -880,6 +914,19 @@ async def _bookmark_run(
 
     except RuntimeError as e:
         console.print(f"\n[red]✗ エラー:[/red] {e}")
+        await _notify_fatal(
+            config.slack_webhook_url,
+            error_type="RuntimeError",
+            message=str(e),
+        )
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"\n[red]✗ 予期しないエラー:[/red] {type(e).__name__}: {e}")
+        await _notify_fatal(
+            config.slack_webhook_url,
+            error_type=type(e).__name__,
+            message=str(e),
+        )
         sys.exit(1)
     finally:
         await browser.close()
