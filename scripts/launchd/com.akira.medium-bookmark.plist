@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Medium Notion Translator - 日次自動実行 (LaunchAgent)
+
+  インストール手順:
+    1. このファイルを ~/Library/LaunchAgents/com.akira.medium-bookmark.plist にコピー
+       cp scripts/launchd/com.akira.medium-bookmark.plist ~/Library/LaunchAgents/
+
+    2. __PROJECT_DIR__ をプロジェクトの絶対パスに置換
+       sed -i '' "s|__PROJECT_DIR__|$(pwd)|g" ~/Library/LaunchAgents/com.akira.medium-bookmark.plist
+
+    3. 読み込み（次回ログイン時から有効、即時起動するなら kickstart も）
+       launchctl load ~/Library/LaunchAgents/com.akira.medium-bookmark.plist
+
+    4. （任意）即時実行で動作確認
+       launchctl start com.akira.medium-bookmark
+
+  アンロード:
+       launchctl unload ~/Library/LaunchAgents/com.akira.medium-bookmark.plist
+
+  ログ:
+       __PROJECT_DIR__/logs/launchd-bookmark.log         (アプリ本体のログ、タイムスタンプ付き)
+       run-daily.sh が起動する前段で失敗した場合は、launchd の system.log で
+       Label "com.akira.medium-bookmark" を grep して確認:
+         log show --predicate 'process == "launchd"' --info --last 1h | grep com.akira.medium-bookmark
+
+  スケジュール:
+       朝 7:00 / 昼 13:00 / 夜 22:00 の 3 回。
+       多重実行は run-daily.sh 側の mkdir ベース排他ロックで防止。
+       Mac がスリープしていた場合、復帰直後に未実行分が実行されることが期待されるが
+       (StartCalendarInterval の挙動)、OS バージョンや状況によっては落ちることがある。
+       1日3回スケジュールで冗長化しているため、1〜2回逃しても実害は出ない設計。
+
+  完全シャットダウン状態からの起動が必要なら、以下も別途設定:
+       sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.akira.medium-bookmark</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_DIR__/scripts/run-daily.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_DIR__</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>7</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>13</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>22</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <!--
+      stdout/stderr のリダイレクトは run-daily.sh が一括して
+      logs/launchd-bookmark.log に集約するため、ここでは設定しない。
+      ラッパーが起動できなかった場合は macOS の system.log を参照（コメント参照）。
+    -->
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

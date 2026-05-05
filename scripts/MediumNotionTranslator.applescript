@@ -1,7 +1,9 @@
 -- Medium Notion Translator - Bookmark Runner
 -- Dock にドロップしてワンクリックで翻訳実行
+-- プロジェクトパスは Contents/Resources/project-dir.txt から実行時に解決
 
-set projectDir to "/Users/akirafujita/Desktop/Box/Dev/medium-notion-translator"
+set appPath to POSIX path of (path to me)
+set projectDir to do shell script "cat " & quoted form of (appPath & "Contents/Resources/project-dir.txt")
 set venvBin to projectDir & "/.venv/bin/medium-notion"
 set logFile to projectDir & "/logs/bookmark-run.log"
 
