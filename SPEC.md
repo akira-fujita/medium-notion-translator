@@ -158,6 +158,10 @@ medium-notion-translator/
 7. **Slack 通知**（`SLACK_WEBHOOK_URL` 設定時のみ）
    - 翻訳した記事のサマリーと Notion ページ URL を Incoming Webhook で送信
    - 送信失敗時はログ出力のみ（メインフローに影響しない）
+   - 通知ルール:
+     - 新規処理あり / 一部失敗あり → サマリー通知（`notify_slack`）
+     - **致命的エラー（Claude CLI 不在 / Notion 認証失敗 / RuntimeError 等）** → アラート通知（`notify_fatal_error`）
+     - 空振り（リスト空 / 全件処理済み）→ 通知しない（無人実行のシグナル汚染を避けるため）
 
 出力ファイル形式（`batch -f` にそのまま渡せる）:
 ```text
@@ -702,3 +706,25 @@ CLAUDE_MODEL=sonnet
 | 2 | 💡 学び・新規性 | EM として知っておくべき新しい知見。既知の一般論は含めない |
 | 3 | 🛠 活用方法 | 「チームにどう展開できるか」「1on1 や意思決定でどう活かせるか」 |
 | 4 | 🔗 他の記事との関連 | 過去の記事一覧を参照し、組み合わせて価値が生まれる提案 |
+
+## 付録 C: 日次自動実行（launchd）
+
+無人で日次処理するための LaunchAgent が `scripts/launchd/` に同梱されている。
+
+**構成要素:**
+
+| ファイル | 役割 |
+|---|---|
+| `scripts/run-daily.sh` | launchd から呼ばれるラッパー。`HEADLESS=true` 相当で `bookmark --run` を実行、ログを `logs/launchd-bookmark.log` に追記 |
+| `scripts/launchd/com.akira.medium-bookmark.plist` | LaunchAgent 定義（朝 7:00 / 昼 13:00 / 夜 22:00 の 3 回実行） |
+| `scripts/launchd/install.sh` | プレースホルダ置換 + `launchctl load` をワンコマンド化 |
+
+**多重実行の安全性:**
+- `run-daily.sh` が `logs/.run-daily.lock` ディレクトリで排他ロック（`mkdir` のアトミック性を利用、12時間以上古ければ自動撤去）
+- 偶発的な多重起動（手動 `launchctl start` / 起動時刻の重なり等）でも、後続インスタンスは即 exit 0 でスキップ
+- ロックを通過した場合でも、`bookmark --run` は処理対象ゼロなら早期 return、既存 URL は `notion.list_existing_urls()` で吸収され二重登録されない（多層防御）
+
+**取りこぼし耐性:**
+- macOS の `StartCalendarInterval` は、スリープ中の予定時刻でも復帰時に未実行分が実行される（期待挙動。OS バージョンや状況によっては落ちることがある）
+- 完全シャットダウンからの自動起動が必要な場合は `pmset repeat wakeorpoweron` を併用
+- 1日3回スケジュールなので、1〜2回逃しても残りで処理が通る冗長設計
