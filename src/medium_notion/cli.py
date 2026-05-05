@@ -394,11 +394,13 @@ async def _batch_translate(
         sys.exit(1)
 
     # 5. 既存記事チェック（処理済みスキップ用）
-    #    ローカルインデックス + Notion DB の URL を統合
+    #    Notion DB が source of truth。ローカル index は translator への
+    #    コンテキスト (既存記事一覧・topics サジェスト) として渡すために
+    #    引き続き読み込むが、スキップ判定には使わない。
+    #    Why: Notion から記事が消えたのにローカル index に残っているケースで、
+    #    再翻訳されずリスト削除だけ走ってしまう問題を防ぐため。
     existing_articles = _load_article_index(config)
-    existing_urls = {a.get("url") for a in existing_articles}
-    notion_urls = notion.list_existing_urls()
-    existing_urls |= notion_urls
+    existing_urls = notion.list_existing_urls()
     existing_topics = notion.list_existing_topics()
 
     # 結果記録
@@ -418,11 +420,10 @@ async def _batch_translate(
             console.print(f"\n[bold]── [{i}/{len(urls)}] ──[/bold]")
             console.print(f"  {url}")
 
-            # 処理済みチェック（ローカルインデックス or Notion DB）
+            # 処理済みチェック (Notion DB が source of truth)
             if url in existing_urls:
-                reason = "Notion DB に登録済み" if url in notion_urls else "処理済み"
-                console.print(f"  [dim]⊘ スキップ（{reason}）[/dim]")
-                skipped.append((url, reason))
+                console.print("  [dim]⊘ スキップ（Notion DB に登録済み）[/dim]")
+                skipped.append((url, "Notion DB に登録済み"))
                 continue
 
             try:
@@ -741,9 +742,13 @@ async def _bookmark_run(
         )
         sys.exit(1)
 
+    # スキップ判定は Notion DB を source of truth とする。
+    # ローカル index は translator のコンテキスト (既存記事の topics サジェスト等)
+    # として引き続き使うため読み込む。
+    # Why: Notion から削除された記事が再翻訳されず、リストからだけ消える
+    # 不整合を避けるため。
     existing_articles = _load_article_index(config)
-    existing_urls = {a.get("url") for a in existing_articles}
-    existing_urls |= notion.list_existing_urls()
+    existing_urls = notion.list_existing_urls()
     existing_topics = notion.list_existing_topics()
 
     # ── ブラウザ初期化（全フェーズで共有） ──
