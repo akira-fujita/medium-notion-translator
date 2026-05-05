@@ -43,3 +43,8 @@ Thumbs.db
 
 # Medium custom-list URL cache (auto-populated)
 .medium-list-cache.json
+
+# Runtime logs (launchd 経由・バックフィル等の自動生成ログ)
+logs/launchd-bookmark.log
+logs/backfill-topics.log
+logs/.run-daily.lock/
