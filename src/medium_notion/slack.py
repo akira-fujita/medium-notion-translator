@@ -74,3 +74,62 @@ async def notify_slack(
     except Exception as e:
         log.warn(f"Slack 通知の送信に失敗: {e}")
         return False
+
+
+async def notify_fatal_error(
+    webhook_url: str,
+    error_type: str,
+    message: str,
+) -> bool:
+    """致命的エラー（実行継続不能）を Slack に通知する
+
+    日次の自動実行（launchd 等）で誰も画面を見ていない状況で、
+    セッション切れ・認証失敗・依存ツール不在などが起きたときに、
+    気づいて手動対応するためのアラート。
+
+    Args:
+        webhook_url: Slack Incoming Webhook の URL
+        error_type: エラー種別（例: "SessionExpired", "NotionAuthError"）
+        message: 詳細メッセージ
+
+    Returns:
+        送信成功なら True
+    """
+    if not webhook_url:
+        return False
+
+    short_message = message if len(message) <= 500 else message[:500] + "..."
+
+    text = (
+        f":rotating_light: *Medium → Notion: 致命的エラー*\n"
+        f"*種別:* `{error_type}`\n"
+        f"```\n{short_message}\n```\n"
+        f"_自動処理は中断されました。手動で対応してください。_"
+    )
+
+    payload = {
+        "text": f":rotating_light: Medium → Notion 致命的エラー: {error_type}",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": text,
+                },
+            },
+        ],
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                webhook_url,
+                json=payload,
+                timeout=10,
+            )
+            resp.raise_for_status()
+        log.success("Slack 致命的エラー通知を送信しました")
+        return True
+    except Exception as e:
+        log.warn(f"Slack 致命的エラー通知の送信に失敗: {e}")
+        return False
