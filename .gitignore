@@ -28,6 +28,9 @@ medium-session.json
 # Article index (contains personal reading history)
 article-index.json
 
+# radar 既読ストア（自動生成・実行時状態）
+radar-seen.json
+
 # Test / Coverage
 .pytest_cache/
 htmlcov/
