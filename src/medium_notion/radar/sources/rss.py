@@ -1,10 +1,16 @@
 """RSS/Atom ソースアダプタ"""
 
 import feedparser
+import httpx
 
 from ..config import FeedSpec
 from ..models import FeedItem
 from ... import logger as log
+
+# フィード取得のタイムアウト（秒）。feedparser.parse(url) はタイムアウトを持たず
+# 1 本の遅いフィードで無人実行が無限ハングするため、必ず httpx 経由で取得する。
+FETCH_TIMEOUT = 15
+_HEADERS = {"User-Agent": "Mozilla/5.0 (medium-notion radar)"}
 
 
 class RssSource:
@@ -16,8 +22,15 @@ class RssSource:
         self.layer = spec.layer
 
     def fetch(self, limit: int | None = None) -> list[FeedItem]:
-        """フィード URL を取得して FeedItem のリストを返す"""
-        parsed = feedparser.parse(self.spec.url)
+        """フィード URL をタイムアウト付きで取得して FeedItem のリストを返す"""
+        resp = httpx.get(
+            self.spec.url,
+            timeout=FETCH_TIMEOUT,
+            follow_redirects=True,
+            headers=_HEADERS,
+        )
+        resp.raise_for_status()
+        parsed = feedparser.parse(resp.content)
         return self._to_items(parsed, limit)
 
     def _parse(self, raw: str, limit: int | None = None) -> list[FeedItem]:
