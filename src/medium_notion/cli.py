@@ -16,6 +16,10 @@ from .config import Config, load_config
 from .browser import BrowserClient
 from .translator import TranslationService
 from .notion_client import NotionClient
+from .radar.config import load_radar_config
+from .radar.state import SeenStore
+from .radar.pipeline import run_radar
+from .radar.digest import render_slack_text
 from . import logger as log
 
 console = Console()
@@ -1324,6 +1328,64 @@ def _show_test_results(results: list[tuple[str, bool, str]]):
     console.print()
     console.print(table)
     console.print()
+
+
+@cli.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--dry-run", is_flag=True, help="取得・採点のみ。Slack/Notion へ送らず表示だけ")
+@click.option("--limit", type=int, default=None, help="フィード当たりの取得上限")
+def radar(dry_run, limit):
+    """RSS フィードを巡回し、採点ダイジェストを Slack + Notion に出力する。
+
+    feeds.yml（取得元）と interests.yml（関心プロファイル）を読み込み、
+    新着記事を Claude が 0〜10 で採点。閾値以上を「今日の刺さる」として
+    Slack にプッシュし、全件を Tech Radar の Notion DB に蓄積します。
+
+    \b
+    使い方:
+      medium-notion radar            取得→採点→Slack+Notion
+      medium-notion radar --dry-run  送信せず内容だけ表示
+    """
+    try:
+        config = load_config()
+    except ValidationError as e:
+        console.print(f"[red]設定エラー:[/red] {e}")
+        sys.exit(1)
+
+    log.setup_logger(config.log_level)
+
+    try:
+        radar_cfg = load_radar_config()
+    except FileNotFoundError as e:
+        console.print(
+            f"[red]設定ファイルが見つかりません:[/red] {e}\n"
+            "  → feeds.yml / interests.yml をリポジトリルートに用意してください"
+        )
+        sys.exit(1)
+
+    try:
+        seen = SeenStore("radar-seen.json")
+        digest = run_radar(
+            config,
+            radar_cfg,
+            seen,
+            dry_run=dry_run,
+            limit=limit,
+            when=date.today(),
+        )
+    except RuntimeError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        sys.exit(1)
+
+    if digest.is_empty:
+        console.print("[yellow]新着なし。何も出力しませんでした。[/yellow]")
+        return
+
+    console.print(render_slack_text(digest))
+    if not dry_run:
+        total = len(digest.highlights) + len(digest.others)
+        console.print(
+            f"\n[bold green]✓ Notion {total}件 / Slack 投稿完了[/bold green]"
+        )
 
 
 # __main__.py 用のエントリポイント

@@ -1,0 +1,9 @@
+- {name: "Anthropic News",         url: "https://www.anthropic.com/news/rss.xml",   layer: "一次情報"}
+- {name: "OpenAI Blog",            url: "https://openai.com/blog/rss.xml",          layer: "一次情報"}
+- {name: "Cloudflare Blog",        url: "https://blog.cloudflare.com/rss/",         layer: "一次情報"}
+- {name: "Netflix TechBlog",       url: "https://netflixtechblog.com/feed",         layer: "一次情報"}
+- {name: "Stripe Blog",            url: "https://stripe.com/blog/feed.rss",         layer: "一次情報"}
+- {name: "The Pragmatic Engineer", url: "https://blog.pragmaticengineer.com/rss/",  layer: "Substack"}
+- {name: "Latent Space",           url: "https://www.latent.space/feed",            layer: "Substack"}
+- {name: "a16z",                   url: "https://a16z.com/feed/",                   layer: "VC"}
+- {name: "Y Combinator Blog",      url: "https://www.ycombinator.com/blog/rss",     layer: "VC"}
