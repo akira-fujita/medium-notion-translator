@@ -252,6 +252,26 @@ medium-notion radar --limit 10
 将来の拡張: `radar/sources/` の `Source` プロトコルに沿って GitHub Trending / Reddit などの
 アダプタを追加できます（X / Podcast はコスト・脆弱性の観点で当面スコープ外）。
 
+#### 毎朝の自動実行（launchd）
+
+`radar` を毎朝 7:00 に自動実行する LaunchAgent が用意されています（Medium の `bookmark` 自動実行とは別系統）。
+
+```bash
+bash scripts/launchd/install-radar.sh
+```
+
+- `~/Library/LaunchAgents/com.akira.tech-radar.plist` が配置・ロードされ、毎朝 7:00 に `medium-notion radar` が走ります。
+- ログは `logs/radar.log`。`run-radar.sh` が PATH 補正・排他ロック（`logs/.run-radar.lock`）・ログ集約を担います。
+- `radar` は seen ストア（`radar-seen.json`）で冪等なので、スリープ復帰での再発火や手動キックでも二重投稿しません。
+
+```bash
+# 確認 / 即時実行 / アンインストール
+launchctl list | grep com.akira.tech-radar
+launchctl start com.akira.tech-radar   # 即時実行で動作確認
+tail -f logs/radar.log
+launchctl unload ~/Library/LaunchAgents/com.akira.tech-radar.plist
+```
+
 ### その他のコマンド
 
 ```bash

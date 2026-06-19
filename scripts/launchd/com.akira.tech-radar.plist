@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tech Radar (RSS ダイジェスト) - 日次自動実行 (LaunchAgent)
+
+  インストール手順:
+    bash scripts/launchd/install-radar.sh
+  （__PROJECT_DIR__ の置換・plutil 検証・launchctl load を一括実行）
+
+  手動でやる場合:
+    1. cp scripts/launchd/com.akira.tech-radar.plist ~/Library/LaunchAgents/
+    2. sed -i '' "s|__PROJECT_DIR__|$(pwd)|g" ~/Library/LaunchAgents/com.akira.tech-radar.plist
+    3. launchctl load ~/Library/LaunchAgents/com.akira.tech-radar.plist
+    4. （任意）launchctl start com.akira.tech-radar
+
+  アンロード:
+    launchctl unload ~/Library/LaunchAgents/com.akira.tech-radar.plist
+
+  ログ:
+    __PROJECT_DIR__/logs/radar.log
+    ラッパー起動前に失敗した場合は system.log を確認:
+      log show --predicate 'process == "launchd"' --info --last 1h | grep com.akira.tech-radar
+
+  スケジュール:
+    毎朝 7:00 の 1 回（「毎朝のレーダー」用途）。
+    radar は seen ストアで冪等なので、スリープ復帰での再発火でも二重投稿しない。
+    多重起動は run-radar.sh 側の mkdir ベース排他ロックで防止。
+
+  完全シャットダウンからの起動が必要なら別途:
+    sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.akira.tech-radar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_DIR__/scripts/run-radar.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_DIR__</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>7</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

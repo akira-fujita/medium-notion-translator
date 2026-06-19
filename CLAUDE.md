@@ -33,6 +33,7 @@ medium-notion batch -f urls.txt -s 7 -i 60
 # Tech Radar（RSS ダイジェスト）
 medium-notion radar            # 取得→採点→Slack+Notion
 medium-notion radar --dry-run  # 送信せず内容だけ表示
+bash scripts/launchd/install-radar.sh  # 毎朝7:00 自動実行を有効化
 
 # メンテナンス
 medium-notion login          # Medium 再ログイン

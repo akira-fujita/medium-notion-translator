@@ -51,3 +51,5 @@ Thumbs.db
 logs/launchd-bookmark.log
 logs/backfill-topics.log
 logs/.run-daily.lock/
+logs/radar.log
+logs/.run-radar.lock/
