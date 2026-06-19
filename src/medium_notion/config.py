@@ -19,6 +19,8 @@ class Config(BaseModel):
     session_path: Path = Path("medium-session.json")
     index_path: Path = Path("article-index.json")
     slack_webhook_url: str | None = None
+    radar_notion_database_id: str | None = None
+    radar_slack_webhook_url: str | None = None
 
     @field_validator("notion_api_key")
     @classmethod
@@ -50,6 +52,14 @@ class Config(BaseModel):
             return f"{d[:8]}-{d[8:12]}-{d[12:16]}-{d[16:20]}-{d[20:]}"
         return d
 
+    @property
+    def radar_notion_database_id_formatted(self) -> str:
+        """radar 用 DB ID をハイフン付き UUID 形式に変換（未設定なら空文字）"""
+        d = (self.radar_notion_database_id or "").replace("-", "")
+        if len(d) == 32:
+            return f"{d[:8]}-{d[8:12]}-{d[12:16]}-{d[16:20]}-{d[20:]}"
+        return d
+
     @classmethod
     def check_claude_code(cls) -> bool:
         """Claude Code CLI が利用可能か確認"""
@@ -70,4 +80,6 @@ def load_config(env_path: str | None = None) -> Config:
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         claude_model=os.getenv("CLAUDE_MODEL", "sonnet"),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
+        radar_notion_database_id=os.getenv("RADAR_NOTION_DATABASE_ID") or None,
+        radar_slack_webhook_url=os.getenv("RADAR_SLACK_WEBHOOK_URL") or None,
     )

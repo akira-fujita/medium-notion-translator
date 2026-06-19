@@ -14,6 +14,8 @@
 Medium の英語技術記事を日本語に翻訳し、Notion データベースに構造化されたページとして自動登録する CLI ツール。
 Engineering Manager が技術ナレッジを効率的に蓄積・活用するためのパイプラインとして設計されている。
 
+> **2 つのパイプライン**: 本仕様書が記述する **深掘り型**（`translate` / `bookmark` / `batch` — 1 本を全文翻訳 + 4 観点要約して Notion に蓄積）に加え、**トリアージ型**の `radar`（RSS フィードを巡回し関心プロファイルで採点 → Slack + Notion ダイジェスト）が同居する。`radar` の設計詳細は `docs/superpowers/specs/2026-06-19-radar-rss-digest-design.md` を参照。
+
 ### 1.2 解決する課題
 
 - Medium の英語記事を読むコストが高い

@@ -21,6 +21,8 @@ dependencies = [
     "pydantic>=2.0",
     "loguru>=0.7",
     "rich>=13.0",
+    "feedparser>=6.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -39,3 +41,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+tdd_guard_project_root = "/Users/akirafujita/medium-notion-translator"

@@ -30,6 +30,11 @@ medium-notion bookmark -l toNotion --run --gui
 # バッチ
 medium-notion batch -f urls.txt -s 7 -i 60
 
+# Tech Radar（RSS ダイジェスト）
+medium-notion radar            # 取得→採点→Slack+Notion
+medium-notion radar --dry-run  # 送信せず内容だけ表示
+bash scripts/launchd/install-radar.sh  # 毎朝7:00 自動実行を有効化
+
 # メンテナンス
 medium-notion login          # Medium 再ログイン
 medium-notion test           # 接続テスト
@@ -52,8 +57,18 @@ src/medium_notion/
 ├── notion_client.py    # Notion ページ作成
 ├── config.py           # 設定管理（Pydantic + .env）
 ├── models.py           # データモデル（MediumArticle, TranslationResult, NotionPage）
-├── slack.py            # Slack 通知（Incoming Webhook）
-└── logger.py           # ロガー（loguru）
+├── slack.py            # Slack 通知（Incoming Webhook）+ radar ダイジェスト投稿
+├── logger.py           # ロガー（loguru）
+└── radar/              # RSS Tech ダイジェスト（取得→採点→Slack+Notion）
+    ├── pipeline.py     # オーケストレーション（fetch→採点→振り分け→出力）
+    ├── curator.py      # Claude 採点（関心プロファイルで 0-10）
+    ├── digest.py       # 振り分け & Slack レンダラ（mrkdwn エスケープ・others 上限）
+    ├── notion_writer.py# Tech Radar DB へ 1 記事=1 行 書き込み
+    ├── state.py        # 既読ストア（radar-seen.json）
+    ├── config.py       # feeds.yml / interests.yml ローダ
+    ├── models.py       # FeedItem / ScoredItem / Digest
+    └── sources/        # 取得元アダプタ（Source プロトコル）
+        └── rss.py      # RSS/Atom（将来 GitHub/Reddit を追加可能）
 ```
 
 ## 設定（.env）
@@ -61,9 +76,13 @@ src/medium_notion/
 ```
 NOTION_API_KEY, NOTION_DATABASE_ID（必須）
 HEADLESS, LOG_LEVEL, CLAUDE_MODEL, SLACK_WEBHOOK_URL（任意）
+RADAR_NOTION_DATABASE_ID, RADAR_SLACK_WEBHOOK_URL（radar 用・任意）
 ```
+
+radar の取得元は `feeds.yml`、採点の関心軸は `interests.yml`（どちらもリポジトリルート）。
 
 ## 詳細ドキュメント
 
 - **設計仕様・全モジュール詳細**: `SPEC.md`
 - **セットアップ・使い方**: `README.md`
+- **radar 設計書**: `docs/superpowers/specs/2026-06-19-radar-rss-digest-design.md`

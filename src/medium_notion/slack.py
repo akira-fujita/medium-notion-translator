@@ -3,6 +3,7 @@
 import httpx
 
 from . import logger as log
+from .radar.digest import render_slack_payload
 
 
 async def notify_slack(
@@ -132,4 +133,25 @@ async def notify_fatal_error(
         return True
     except Exception as e:
         log.warn(f"Slack 致命的エラー通知の送信に失敗: {e}")
+        return False
+
+
+async def post_digest(webhook_url: str, digest: "Digest") -> bool:
+    """Tech Radar ダイジェストを Slack に投稿する。
+
+    webhook 未設定 / 空ダイジェストなら送らず False。送信失敗もログのみで False
+    （メインフローを止めない）。
+    """
+    if not webhook_url or digest.is_empty:
+        return False
+
+    payload = render_slack_payload(digest)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(webhook_url, json=payload, timeout=10)
+            resp.raise_for_status()
+        log.success("Slack ダイジェストを送信しました")
+        return True
+    except Exception as e:
+        log.warn(f"Slack ダイジェスト送信に失敗: {e}")
         return False
