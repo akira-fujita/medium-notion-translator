@@ -208,6 +208,50 @@ sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00
 - 既存 URL は Notion 側 + ローカルインデックスで吸収され二重登録されない
 - 空振り（リスト空 / 全件処理済み）はサイレントに終了
 
+### Tech Radar（RSS ダイジェスト）
+
+Medium 翻訳とは別系統の「毎朝のレーダー」機能です。企業 Engineering Blog / Substack / VC ブログを
+RSS で巡回し、新着記事を Claude が**関心プロファイルに照らして 0〜10 で採点**。閾値以上を
+「今日の刺さる N 本」として Slack にプッシュし、全件を Notion の Tech Radar DB に蓄積します。
+
+深掘り翻訳（`translate`）が「1 本を深く読む」のに対し、`radar` は「多数を流し見して刺さるものだけ拾う」
+トリアージ型です。ブラウザ・Medium セッションには依存しません。
+
+セットアップ:
+
+```bash
+# 1. Notion に「Tech Radar」DB を作成し、Integration を接続
+#    必要プロパティ: 名前(title) / URL(url) / Date(date) / Source(select)
+#                    / Layer(select) / Summary(text) / Why(text) / Score(number)
+# 2. .env に DB ID を設定
+#    RADAR_NOTION_DATABASE_ID=...
+#    RADAR_SLACK_WEBHOOK_URL=...   # 任意。未設定なら SLACK_WEBHOOK_URL を流用
+# 3. 取得元と関心軸を編集
+vi feeds.yml       # 取得する RSS フィード（name / url / layer）
+vi interests.yml   # 採点の関心プロファイル（threshold / max_highlights / profile）
+```
+
+使い方:
+
+```bash
+# 取得 → 採点 → Slack + Notion へ出力
+medium-notion radar
+
+# 送信せず内容だけ確認（dry-run）
+medium-notion radar --dry-run
+
+# フィード当たりの取得上限を指定
+medium-notion radar --limit 10
+```
+
+採点ロジック: `interests.yml` の `profile`（関心軸）と各記事の冒頭を Claude に**一括投入**し、
+0〜10 のスコア・日本語要約・「自分の仕事への影響」を JSON で受け取ります。`score >= threshold` を
+ハイライト、それ未満を「その他」に振り分けます。Claude 採点が失敗しても素の新着はそのまま流れます
+（情報を捨てない設計）。新着ゼロのときは Slack/Notion へ何も送りません。
+
+将来の拡張: `radar/sources/` の `Source` プロトコルに沿って GitHub Trending / Reddit などの
+アダプタを追加できます（X / Podcast はコスト・脆弱性の観点で当面スコープ外）。
+
 ### その他のコマンド
 
 ```bash
