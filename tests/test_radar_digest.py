@@ -56,6 +56,24 @@ def test_render_slack_text_escapes_summary_and_why():
     assert "&lt;b&gt;注目&lt;/b&gt;" in text
 
 
+def test_render_slack_payload_splits_into_blocks_under_3000():
+    """大きいダイジェストでも各 section ブロックが Slack 上限 3000 文字を超えない"""
+    scored = [
+        _scored(f"https://example.com/articles/{i}", 8 if i < 12 else 2,
+                jp=f"記事タイトル{i}：AI時代の組織設計と構造変化についての長めの見出し",
+                summary=f"要約{i}：" + "この記事は組織のAI導入に伴う構造変化を詳しく論じている。" * 4,
+                why=f"理由{i}：" + "EM・事業責任者視点での実務示唆が大きい。" * 4)
+        for i in range(40)
+    ]
+    d = build_digest(scored, threshold=7, max_highlights=12)
+    payload = render_slack_payload(d)
+    blocks = payload["blocks"]
+    assert len(blocks) >= 2  # 分割されている
+    for b in blocks:
+        assert b["type"] == "section"
+        assert len(b["text"]["text"]) <= 3000
+
+
 def test_render_slack_text_caps_others_links():
     """others が大量でも Slack のブロック長制限を超えないよう打ち切り、件数は保持して表示"""
     scored = [_scored(f"u{i}", 1, jp=f"記事{i}") for i in range(50)]
