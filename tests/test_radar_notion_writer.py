@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import MagicMock
 
 from medium_notion.config import Config
 from medium_notion.radar.models import FeedItem, ScoredItem
@@ -35,3 +36,24 @@ def test_build_properties_falls_back_to_original_title():
     writer = RadarNotionWriter(_cfg())
     props = writer._build_properties(scored, date(2026, 6, 19))
     assert props["名前"]["title"][0]["text"]["content"] == "EN Only"
+
+
+def test_append_item_returns_created_page_url():
+    fi = FeedItem(url="https://x/a", title="T", source="s", layer="VC")
+    scored = ScoredItem(item=fi, score=8, jp_title="題")
+    writer = RadarNotionWriter(_cfg())
+    writer.client = MagicMock()
+    writer.client.pages.create.return_value = {"url": "https://notion.so/created-xyz"}
+
+    url = writer.append_item(scored, date(2026, 6, 19))
+    assert url == "https://notion.so/created-xyz"
+
+
+def test_append_item_returns_none_on_failure():
+    fi = FeedItem(url="https://x/a", title="T", source="s", layer="VC")
+    scored = ScoredItem(item=fi, score=8, jp_title="題")
+    writer = RadarNotionWriter(_cfg())
+    writer.client = MagicMock()
+    writer.client.pages.create.side_effect = RuntimeError("boom")
+
+    assert writer.append_item(scored, date(2026, 6, 19)) is None

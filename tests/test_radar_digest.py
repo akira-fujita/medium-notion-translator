@@ -30,6 +30,17 @@ def test_render_slack_text_contains_highlight_and_others():
     assert "その他" in text
 
 
+def test_render_slack_text_includes_notion_link_for_highlights():
+    """ハイライトに notion_url があれば '📝 Notion で開く' リンクを出す"""
+    fi = FeedItem(url="https://x/a", title="EN", source="src", layer="VC")
+    s = ScoredItem(item=fi, score=9, jp_title="刺さる記事", summary="要約", why="理由",
+                   notion_url="https://notion.so/page-abc")
+    d = build_digest([s], threshold=7, max_highlights=8)
+    text = render_slack_text(d)
+    assert "<https://notion.so/page-abc|" in text
+    assert "Notion" in text
+
+
 def test_render_slack_payload_shape():
     d = build_digest([_scored("u1", 9)], threshold=7, max_highlights=8)
     payload = render_slack_payload(d)

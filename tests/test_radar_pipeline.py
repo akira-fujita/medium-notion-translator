@@ -76,6 +76,28 @@ def test_run_radar_writes_and_marks_seen(tmp_path, monkeypatch):
     assert seen.filter_new([item]) == []
 
 
+def test_run_radar_sets_notion_url_on_items(tmp_path, monkeypatch):
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    item = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [item]
+    )
+    scorer = MagicMock()
+    scored = ScoredItem(item=item, score=9, jp_title="題")
+    scorer.score.return_value = [scored]
+
+    notion_writer = MagicMock()
+    notion_writer.append_item.return_value = "https://notion.so/page-1"
+
+    digest = run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+                       when=date(2026, 6, 19), scorer=scorer,
+                       notion_writer=notion_writer, slack_post=lambda u, d: True)
+
+    # 書き込んだページ URL が ScoredItem に反映される（Slack の Notion リンク用）
+    assert digest.highlights[0].notion_url == "https://notion.so/page-1"
+
+
 def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
     radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
     item = FeedItem(url="https://x/a", title="t", source="S", layer="VC")

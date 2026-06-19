@@ -35,12 +35,18 @@ class RadarNotionWriter:
             "Score": {"number": scored.score},
         }
 
-    def append_item(self, scored: ScoredItem, when: date) -> None:
-        """1 記事を Tech Radar DB に追加する。失敗時はログのみ（継続）"""
+    def append_item(self, scored: ScoredItem, when: date) -> str | None:
+        """1 記事を Tech Radar DB に追加し、作成ページの URL を返す。
+
+        失敗時はログのみ出して None を返す（継続。Slack の Notion リンクが
+        その項目だけ省かれる）。
+        """
         try:
-            self.client.pages.create(
+            resp = self.client.pages.create(
                 parent={"data_source_id": self.database_id},
                 properties=self._build_properties(scored, when),
             )
+            return resp.get("url")
         except Exception as e:
             log.warn(f"Notion 追加に失敗（スキップ）: {scored.item.url}: {e}")
+            return None

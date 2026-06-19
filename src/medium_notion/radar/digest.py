@@ -49,6 +49,8 @@ def render_slack_text(digest: Digest) -> str:
                 lines.append(f"    {_escape_mrkdwn(s.summary)}")
             if s.why:
                 lines.append(f"    💡 {_escape_mrkdwn(s.why)}")
+            if s.notion_url:
+                lines.append(f"    📝 <{s.notion_url}|Notion で開く>")
     else:
         lines.append("_今日の閾値超えはありませんでした_")
 

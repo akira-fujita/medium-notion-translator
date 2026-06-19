@@ -30,6 +30,7 @@ class ScoredItem:
     jp_title: str = ""
     summary: str = ""
     why: str = ""
+    notion_url: str = ""  # Notion に蓄積したページの URL（pipeline が書き込み後にセット）
 
 
 @dataclass

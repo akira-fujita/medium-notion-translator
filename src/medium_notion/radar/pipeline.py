@@ -54,10 +54,10 @@ def run_radar(
         digest.slack_status = "dry_run"
         return digest
 
-    # 5. Notion 蓄積
+    # 5. Notion 蓄積（作成ページ URL を各 ScoredItem に記録 → Slack の Notion リンク用）
     writer = notion_writer or RadarNotionWriter(config)
     for s in digest.highlights + digest.others:
-        writer.append_item(s, when)
+        s.notion_url = writer.append_item(s, when) or ""
 
     # 6. Slack プッシュ（送信結果を digest に記録）
     webhook = config.radar_slack_webhook_url or config.slack_webhook_url
