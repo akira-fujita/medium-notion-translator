@@ -1,9 +1,19 @@
-- {name: "Anthropic News",         url: "https://www.anthropic.com/news/rss.xml",   layer: "一次情報"}
-- {name: "OpenAI Blog",            url: "https://openai.com/blog/rss.xml",          layer: "一次情報"}
-- {name: "Cloudflare Blog",        url: "https://blog.cloudflare.com/rss/",         layer: "一次情報"}
-- {name: "Netflix TechBlog",       url: "https://netflixtechblog.com/feed",         layer: "一次情報"}
-- {name: "Stripe Blog",            url: "https://stripe.com/blog/feed.rss",         layer: "一次情報"}
-- {name: "The Pragmatic Engineer", url: "https://blog.pragmaticengineer.com/rss/",  layer: "Substack"}
-- {name: "Latent Space",           url: "https://www.latent.space/feed",            layer: "Substack"}
-- {name: "a16z",                   url: "https://a16z.com/feed/",                   layer: "VC"}
-- {name: "Y Combinator Blog",      url: "https://www.ycombinator.com/blog/rss",     layer: "VC"}
+# 取得元 RSS/Atom フィード（name / url / layer）
+# layer はダイジェストのグループ見出し。URL は 2026-06-19 時点で到達性を検証済み。
+# Anthropic News と a16z は公式 RSS が廃止/不在のため不採用（再開したら追加可）。
+
+# --- 一次情報（企業 Engineering Blog）---
+- {name: "OpenAI Blog",            url: "https://openai.com/blog/rss.xml",            layer: "一次情報"}
+- {name: "Cloudflare Blog",        url: "https://blog.cloudflare.com/rss/",           layer: "一次情報"}
+- {name: "Netflix TechBlog",       url: "https://medium.com/feed/netflix-techblog",   layer: "一次情報"}
+- {name: "Stripe Blog",            url: "https://stripe.com/blog/feed.rss",           layer: "一次情報"}
+
+# --- Substack / 個人（考え方・構造変化）---
+- {name: "The Pragmatic Engineer", url: "https://blog.pragmaticengineer.com/rss/",    layer: "Substack"}
+- {name: "Latent Space",           url: "https://www.latent.space/feed",              layer: "Substack"}
+- {name: "Simon Willison",         url: "https://simonwillison.net/atom/everything/", layer: "Substack"}
+- {name: "Stratechery",            url: "https://stratechery.com/feed/",              layer: "Substack"}
+
+# --- VC（どこに金が流れているか）---
+- {name: "Sequoia Capital",        url: "https://www.sequoiacap.com/feed/",           layer: "VC"}
+- {name: "Y Combinator Blog",      url: "https://www.ycombinator.com/blog/rss",       layer: "VC"}
