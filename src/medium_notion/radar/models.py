@@ -38,6 +38,8 @@ class Digest:
 
     highlights: list[ScoredItem] = field(default_factory=list)
     others: list[ScoredItem] = field(default_factory=list)
+    # Slack 送信結果: "sent" / "failed" / "skipped"(webhook未設定) / "dry_run" / "empty"
+    slack_status: str = "skipped"
 
     @property
     def is_empty(self) -> bool:

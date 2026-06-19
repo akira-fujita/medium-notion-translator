@@ -51,6 +51,7 @@ def run_radar(
 
     if dry_run:
         log.step("dry-run: Notion/Slack へは送信しません")
+        digest.slack_status = "dry_run"
         return digest
 
     # 5. Notion 蓄積
@@ -58,7 +59,7 @@ def run_radar(
     for s in digest.highlights + digest.others:
         writer.append_item(s, when)
 
-    # 6. Slack プッシュ
+    # 6. Slack プッシュ（送信結果を digest に記録）
     webhook = config.radar_slack_webhook_url or config.slack_webhook_url
     if webhook:
         poster = slack_post
@@ -68,7 +69,10 @@ def run_radar(
             def poster(url, d):
                 return asyncio.run(post_digest(url, d))
 
-        poster(webhook, digest)
+        sent = poster(webhook, digest)
+        digest.slack_status = "sent" if sent else "failed"
+    else:
+        digest.slack_status = "skipped"
 
     # 7. 既読化
     seen.mark_seen(new_items)

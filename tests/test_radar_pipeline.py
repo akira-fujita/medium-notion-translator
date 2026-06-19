@@ -74,3 +74,39 @@ def test_run_radar_writes_and_marks_seen(tmp_path, monkeypatch):
     notion_writer.append_item.assert_called_once()
     slack_post.assert_called_once()
     assert seen.filter_new([item]) == []
+
+
+def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
+    item = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [item]
+    )
+    scorer = MagicMock()
+    scorer.score.return_value = [ScoredItem(item=item, score=9, jp_title="題")]
+
+    cfg = _cfg()
+    cfg.slack_webhook_url = "https://hooks.slack.test/x"
+
+    # 送信成功 → "sent"
+    seen1 = SeenStore(str(tmp_path / "s1.json"))
+    d_sent = run_radar(cfg, radar_cfg, seen1, dry_run=False, limit=None,
+                       when=date(2026, 6, 19), scorer=scorer,
+                       notion_writer=MagicMock(), slack_post=lambda u, d: True)
+    assert d_sent.slack_status == "sent"
+
+    # 送信失敗 → "failed"
+    seen2 = SeenStore(str(tmp_path / "s2.json"))
+    d_failed = run_radar(cfg, radar_cfg, seen2, dry_run=False, limit=None,
+                         when=date(2026, 6, 19), scorer=scorer,
+                         notion_writer=MagicMock(), slack_post=lambda u, d: False)
+    assert d_failed.slack_status == "failed"
+
+    # webhook 未設定 → "skipped"
+    cfg_no_hook = _cfg()
+    cfg_no_hook.slack_webhook_url = None
+    seen3 = SeenStore(str(tmp_path / "s3.json"))
+    d_skip = run_radar(cfg_no_hook, radar_cfg, seen3, dry_run=False, limit=None,
+                       when=date(2026, 6, 19), scorer=scorer,
+                       notion_writer=MagicMock(), slack_post=lambda u, d: True)
+    assert d_skip.slack_status == "skipped"
