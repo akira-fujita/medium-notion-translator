@@ -65,6 +65,19 @@ class Curator:
         )
         return SCORING_PROMPT.format(profile=profile_text, articles=articles_text)
 
+    @staticmethod
+    def _coerce_score(value) -> int:
+        """Claude が返す score を 0〜10 の整数に正規化する。
+
+        '9/10' や 'high' のような不正値でも例外を投げず 0 にフォールバックし、
+        範囲外は 0〜10 にクランプする（採点失敗で run 全体を落とさないため）。
+        """
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(10, n))
+
     def _merge(self, items: list[FeedItem], scored_raw: list[dict]) -> list[ScoredItem]:
         by_url = {d.get("url"): d for d in scored_raw if isinstance(d, dict)}
         result: list[ScoredItem] = []
@@ -73,7 +86,7 @@ class Curator:
             result.append(
                 ScoredItem(
                     item=it,
-                    score=int(d.get("score", 0) or 0),
+                    score=self._coerce_score(d.get("score", 0)),
                     jp_title=d.get("jp_title", "") or "",
                     summary=d.get("summary", "") or "",
                     why=d.get("why", "") or "",

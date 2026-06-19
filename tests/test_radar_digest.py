@@ -35,3 +35,35 @@ def test_render_slack_payload_shape():
     payload = render_slack_payload(d)
     assert "text" in payload and "blocks" in payload
     assert isinstance(payload["blocks"], list)
+
+
+def test_render_slack_text_escapes_mrkdwn_control_chars():
+    """タイトル内の < > & は Slack mrkdwn 用にエスケープされる（リンク破損防止）"""
+    d = build_digest([_scored("u1", 9, jp="<JSX> & React")], threshold=7, max_highlights=8)
+    text = render_slack_text(d)
+    assert "&lt;JSX&gt; &amp; React" in text
+    # 生の < > はリンク構文部分以外に残らない
+    assert "<JSX>" not in text
+
+
+def test_render_slack_text_escapes_summary_and_why():
+    d = build_digest(
+        [_scored("u1", 9, jp="T", summary="use <Foo> & bar", why="<b>注目</b>")],
+        threshold=7, max_highlights=8,
+    )
+    text = render_slack_text(d)
+    assert "use &lt;Foo&gt; &amp; bar" in text
+    assert "&lt;b&gt;注目&lt;/b&gt;" in text
+
+
+def test_render_slack_text_caps_others_links():
+    """others が大量でも Slack のブロック長制限を超えないよう打ち切り、件数は保持して表示"""
+    scored = [_scored(f"u{i}", 1, jp=f"記事{i}") for i in range(50)]
+    d = build_digest(scored, threshold=7, max_highlights=8)
+    text = render_slack_text(d)
+    # 全 50 件の総数は見出しに出る
+    assert "その他 50件" in text
+    # ただしリンクは打ち切られ「ほか N件」が付く
+    assert "ほか" in text
+    # リンク数（<...|...>）は 50 未満に抑えられている
+    assert text.count("|記事") < 50

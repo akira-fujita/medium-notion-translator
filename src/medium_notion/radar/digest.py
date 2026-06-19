@@ -2,6 +2,9 @@
 
 from .models import ScoredItem, Digest
 
+# Slack の section text は約 3000 文字上限。その他リンクの列挙はこの件数で打ち切る。
+MAX_OTHERS_LINKS = 20
+
 
 def build_digest(
     scored: list[ScoredItem], threshold: int, max_highlights: int
@@ -17,8 +20,16 @@ def build_digest(
     return Digest(highlights=highlights, others=others)
 
 
+def _escape_mrkdwn(text: str) -> str:
+    """Slack mrkdwn の制御文字をエスケープする（リンク・表示の破損防止）。
+
+    Slack の仕様に従い & < > のみをエスケープする（順序重要: & を最初に）。
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _display_title(s: ScoredItem) -> str:
-    return s.jp_title or s.item.title
+    return _escape_mrkdwn(s.jp_title or s.item.title)
 
 
 def render_slack_text(digest: Digest) -> str:
@@ -31,17 +42,21 @@ def render_slack_text(digest: Digest) -> str:
             title = _display_title(s)
             lines.append(f"• [{s.item.layer}] <{s.item.url}|{title}> (score {s.score})")
             if s.summary:
-                lines.append(f"    {s.summary}")
+                lines.append(f"    {_escape_mrkdwn(s.summary)}")
             if s.why:
-                lines.append(f"    💡 {s.why}")
+                lines.append(f"    💡 {_escape_mrkdwn(s.why)}")
     else:
         lines.append("_今日の閾値超えはありませんでした_")
 
     if digest.others:
         lines.append("")
+        shown = digest.others[:MAX_OTHERS_LINKS]
         others_links = " · ".join(
-            f"<{s.item.url}|{_display_title(s)}>" for s in digest.others
+            f"<{s.item.url}|{_display_title(s)}>" for s in shown
         )
+        hidden = len(digest.others) - len(shown)
+        if hidden > 0:
+            others_links += f" … ほか {hidden}件"
         lines.append(f"📂 *その他 {len(digest.others)}件*: {others_links}")
 
     return "\n".join(lines)
