@@ -56,3 +56,18 @@ def test_radar_reports_slack_failure(tmp_path, monkeypatch):
     # 「投稿完了」と嘘をつかず、失敗が分かる表示になっている
     assert "投稿完了" not in result.output
     assert "失敗" in result.output
+
+
+def test_radar_no_deepdive_flag_passed_through(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(notion_api_key="ntn_real_key", notion_database_id="a" * 32)
+    radar_cfg = RadarConfig(threshold=7)
+    digest = Digest(highlights=[], others=[])
+
+    with patch("medium_notion.cli.load_config", return_value=cfg), \
+         patch("medium_notion.cli.load_radar_config", return_value=radar_cfg), \
+         patch("medium_notion.cli.run_radar", return_value=digest) as mock_run:
+        result = CliRunner().invoke(cli, ["radar", "--no-deepdive"])
+
+    assert result.exit_code == 0
+    assert mock_run.call_args.kwargs["no_deepdive"] is True

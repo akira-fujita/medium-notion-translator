@@ -23,6 +23,7 @@ dependencies = [
     "rich>=13.0",
     "feedparser>=6.0",
     "pyyaml>=6.0",
+    "trafilatura>=2.0",
 ]
 
 [project.optional-dependencies]

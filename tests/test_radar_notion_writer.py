@@ -2,7 +2,7 @@ from datetime import date
 from unittest.mock import MagicMock
 
 from medium_notion.config import Config
-from medium_notion.radar.models import FeedItem, ScoredItem
+from medium_notion.radar.models import FeedItem, ScoredItem, DeepDive
 from medium_notion.radar.notion_writer import RadarNotionWriter
 
 
@@ -57,3 +57,47 @@ def test_append_item_returns_none_on_failure():
     writer.client.pages.create.side_effect = RuntimeError("boom")
 
     assert writer.append_item(scored, date(2026, 6, 19)) is None
+
+
+def test_append_item_writes_deepdive_body_when_present():
+    fi = FeedItem(url="https://x/a", title="T", source="a16z", layer="VC")
+    dd = DeepDive(translation="## 本文\n\n訳文です。", overview="概要",
+                  key_points="押さえる点", critique="批判", fulltext_ok=True)
+    scored = ScoredItem(item=fi, score=8, jp_title="題", deepdive=dd)
+    writer = RadarNotionWriter(_cfg())
+    writer.client = MagicMock()
+    writer.client.pages.create.return_value = {"id": "page-1", "url": "https://notion.so/p1"}
+
+    writer.append_item(scored, date(2026, 6, 19))
+
+    # 本文ブロックが append された
+    assert writer.client.blocks.children.append.called
+    # append された全ブロックの text を集めて、4セクション見出しが含まれる
+    all_text = ""
+    for call in writer.client.blocks.children.append.call_args_list:
+        for b in call.kwargs.get("children", []):
+            for key in ("heading_2", "paragraph", "bulleted_list_item"):
+                if key in b:
+                    all_text += "".join(rt["text"]["content"] for rt in b[key]["rich_text"])
+    assert "要約" in all_text
+    assert "全文翻訳" in all_text
+    assert "押さえるべきポイント" in all_text
+    assert "批判的視点" in all_text
+
+
+def test_deepdive_body_batched_over_100_blocks():
+    fi = FeedItem(url="https://x/a", title="T", source="a16z", layer="VC")
+    # 200 段落の翻訳 → 100 ブロック上限で複数回 append される
+    long_translation = "\n\n".join(f"段落{i}。" for i in range(200))
+    dd = DeepDive(translation=long_translation, overview="概要", key_points="点",
+                  critique="批判", fulltext_ok=True)
+    scored = ScoredItem(item=fi, score=8, jp_title="題", deepdive=dd)
+    writer = RadarNotionWriter(_cfg())
+    writer.client = MagicMock()
+    writer.client.pages.create.return_value = {"id": "page-1", "url": "https://notion.so/p1"}
+
+    writer.append_item(scored, date(2026, 6, 19))
+
+    assert writer.client.blocks.children.append.call_count >= 2
+    for call in writer.client.blocks.children.append.call_args_list:
+        assert len(call.kwargs["children"]) <= 100

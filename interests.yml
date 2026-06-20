@@ -1,5 +1,6 @@
 threshold: 7
 max_highlights: 8
+deepdive_max: 8   # 1 実行で深掘り（全文翻訳＋分析）する刺さる記事の上限
 profile:
   - "AI 時代の EM / engineering manager layer の設計"
   - "組織の AI 導入と、それに伴う構造変化"

@@ -40,4 +40,14 @@ def test_load_radar_config_defaults_when_optional_missing(tmp_path):
 
     assert cfg.threshold == 7
     assert cfg.max_highlights == 8
+    assert cfg.deepdive_max == 8  # デフォルト
     assert len(cfg.feeds) == 1
+
+
+def test_load_radar_config_reads_deepdive_max(tmp_path):
+    feeds = tmp_path / "feeds.yml"
+    feeds.write_text('- {name: "X", url: "https://x/rss", layer: "VC"}\n')
+    interests = tmp_path / "interests.yml"
+    interests.write_text("deepdive_max: 3\nprofile:\n  - \"x\"\n")
+    cfg = load_radar_config(str(feeds), str(interests))
+    assert cfg.deepdive_max == 3

@@ -47,6 +47,11 @@ class RssSource:
             url = e.get("link", "")
             if not url:
                 continue
+            # content:encoded（RSS）/ content（Atom）に全文があれば取り込む
+            content_full = ""
+            content = e.get("content")
+            if content and isinstance(content, list) and content:
+                content_full = content[0].get("value", "") or ""
             items.append(
                 FeedItem(
                     url=url,
@@ -56,6 +61,7 @@ class RssSource:
                     summary_raw=e.get("summary", ""),
                     published=e.get("published", None),
                     guid=e.get("id", "") or e.get("guid", ""),
+                    content_full=content_full,
                 )
             )
         return items

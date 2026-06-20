@@ -13,6 +13,11 @@ from .sources.rss import RssSource
 from .state import SeenStore
 from .. import logger as log
 
+# --limit 未指定時のフィード当たり取得上限。
+# 無制限だと初回（seen 空）に全フィードの全履歴（OpenAI で 1000 件超）を処理してしまい、
+# Notion 大量登録・Claude 採点破綻・コスト爆発を招くため、既定で必ず bound する。
+DEFAULT_FEED_LIMIT = 12
+
 
 def run_radar(
     config: Config,
@@ -25,13 +30,18 @@ def run_radar(
     scorer=None,
     notion_writer=None,
     slack_post=None,
+    diver=None,
+    fulltext_fn=None,
+    no_deepdive: bool = False,
 ) -> Digest:
     """radar パイプラインを実行して Digest を返す"""
     # 1. 全フィード取得（1 件失敗しても継続）
+    # --limit 未指定でもデフォルト上限を必ず適用（バックログ全件処理を防ぐ）
+    effective_limit = limit if limit is not None else DEFAULT_FEED_LIMIT
     all_items = []
     for spec in radar_cfg.feeds:
         try:
-            all_items.extend(RssSource(spec).fetch(limit))
+            all_items.extend(RssSource(spec).fetch(effective_limit))
         except Exception as e:
             log.warn(f"フィード取得失敗（スキップ）: {spec.name}: {e}")
 
@@ -53,6 +63,20 @@ def run_radar(
         log.step("dry-run: Notion/Slack へは送信しません")
         digest.slack_status = "dry_run"
         return digest
+
+    # 4.5 刺さる記事を深掘り（本文取得 → 全文翻訳＋分析）。deepdive_max まで。
+    if not no_deepdive and digest.highlights:
+        from .fulltext import fetch_fulltext
+        from .deepdive import DeepDiver
+
+        diver = diver or DeepDiver(config)
+        fulltext_fn = fulltext_fn or fetch_fulltext
+        targets = digest.highlights[: radar_cfg.deepdive_max]
+        skipped = len(digest.highlights) - len(targets)
+        log.step(f"深掘り対象 {len(targets)} 件（上限 {radar_cfg.deepdive_max}, 見送り {skipped}）")
+        for s in targets:
+            fulltext = fulltext_fn(s.item)
+            s.deepdive = diver.analyze(s.item, fulltext)
 
     # 5. Notion 蓄積（作成ページ URL を各 ScoredItem に記録 → Slack の Notion リンク用）
     writer = notion_writer or RadarNotionWriter(config)
