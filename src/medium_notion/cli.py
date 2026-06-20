@@ -1333,7 +1333,8 @@ def _show_test_results(results: list[tuple[str, bool, str]]):
 @cli.command(context_settings=CONTEXT_SETTINGS)
 @click.option("--dry-run", is_flag=True, help="取得・採点のみ。Slack/Notion へ送らず表示だけ")
 @click.option("--limit", type=int, default=None, help="フィード当たりの取得上限")
-def radar(dry_run, limit):
+@click.option("--no-deepdive", is_flag=True, help="刺さる記事の深掘り（全文翻訳・分析）を無効化")
+def radar(dry_run, limit, no_deepdive):
     """RSS フィードを巡回し、採点ダイジェストを Slack + Notion に出力する。
 
     feeds.yml（取得元）と interests.yml（関心プロファイル）を読み込み、
@@ -1371,6 +1372,7 @@ def radar(dry_run, limit):
             dry_run=dry_run,
             limit=limit,
             when=date.today(),
+            no_deepdive=no_deepdive,
         )
     except RuntimeError as e:
         console.print(f"[red]✗ {e}[/red]")

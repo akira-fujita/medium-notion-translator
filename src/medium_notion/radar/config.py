@@ -21,6 +21,7 @@ class RadarConfig:
     feeds: list[FeedSpec] = field(default_factory=list)
     threshold: int = 7
     max_highlights: int = 8
+    deepdive_max: int = 8  # 1 実行で深掘りする刺さる記事の上限（コスト防御）
     profile: list[str] = field(default_factory=list)
 
 
@@ -43,5 +44,6 @@ def load_radar_config(
         feeds=feeds,
         threshold=int(interests_raw.get("threshold", 7)),
         max_highlights=int(interests_raw.get("max_highlights", 8)),
+        deepdive_max=int(interests_raw.get("deepdive_max", 8)),
         profile=list(interests_raw.get("profile", [])),
     )

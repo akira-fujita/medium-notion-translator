@@ -25,6 +25,9 @@ def run_radar(
     scorer=None,
     notion_writer=None,
     slack_post=None,
+    diver=None,
+    fulltext_fn=None,
+    no_deepdive: bool = False,
 ) -> Digest:
     """radar パイプラインを実行して Digest を返す"""
     # 1. 全フィード取得（1 件失敗しても継続）
@@ -53,6 +56,20 @@ def run_radar(
         log.step("dry-run: Notion/Slack へは送信しません")
         digest.slack_status = "dry_run"
         return digest
+
+    # 4.5 刺さる記事を深掘り（本文取得 → 全文翻訳＋分析）。deepdive_max まで。
+    if not no_deepdive and digest.highlights:
+        from .fulltext import fetch_fulltext
+        from .deepdive import DeepDiver
+
+        diver = diver or DeepDiver(config)
+        fulltext_fn = fulltext_fn or fetch_fulltext
+        targets = digest.highlights[: radar_cfg.deepdive_max]
+        skipped = len(digest.highlights) - len(targets)
+        log.step(f"深掘り対象 {len(targets)} 件（上限 {radar_cfg.deepdive_max}, 見送り {skipped}）")
+        for s in targets:
+            fulltext = fulltext_fn(s.item)
+            s.deepdive = diver.analyze(s.item, fulltext)
 
     # 5. Notion 蓄積（作成ページ URL を各 ScoredItem に記録 → Slack の Notion リンク用）
     writer = notion_writer or RadarNotionWriter(config)

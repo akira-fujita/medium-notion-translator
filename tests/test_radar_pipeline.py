@@ -69,7 +69,7 @@ def test_run_radar_writes_and_marks_seen(tmp_path, monkeypatch):
     cfg.slack_webhook_url = "https://hooks.slack.test/x"
     run_radar(cfg, radar_cfg, seen, dry_run=False, limit=None,
               when=date(2026, 6, 19), scorer=scorer,
-              notion_writer=notion_writer, slack_post=slack_post)
+              notion_writer=notion_writer, slack_post=slack_post, no_deepdive=True)
 
     notion_writer.append_item.assert_called_once()
     slack_post.assert_called_once()
@@ -92,10 +92,37 @@ def test_run_radar_sets_notion_url_on_items(tmp_path, monkeypatch):
 
     digest = run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
                        when=date(2026, 6, 19), scorer=scorer,
-                       notion_writer=notion_writer, slack_post=lambda u, d: True)
+                       notion_writer=notion_writer, slack_post=lambda u, d: True,
+                       no_deepdive=True)
 
     # 書き込んだページ URL が ScoredItem に反映される（Slack の Notion リンク用）
     assert digest.highlights[0].notion_url == "https://notion.so/page-1"
+
+
+def test_run_radar_deepdives_highlights_only_capped(tmp_path, monkeypatch):
+    from medium_notion.radar.models import DeepDive
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")],
+                            threshold=7, deepdive_max=2)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    items = [FeedItem(url=f"https://x/{i}", title="t", source="S", layer="VC")
+             for i in range(5)]
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: items
+    )
+    scorer = MagicMock()
+    scored = [ScoredItem(item=it, score=9 if i < 3 else 2) for i, it in enumerate(items)]
+    scorer.score.return_value = scored
+
+    diver = MagicMock()
+    diver.analyze.return_value = DeepDive(overview="o", fulltext_ok=False)
+
+    run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+              when=date(2026, 6, 19), scorer=scorer,
+              notion_writer=MagicMock(), slack_post=lambda u, d: True,
+              diver=diver, fulltext_fn=lambda it: None)
+
+    # 刺さる3件のうち deepdive_max=2 までしか深掘りしない
+    assert diver.analyze.call_count == 2
 
 
 def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
@@ -114,14 +141,16 @@ def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
     seen1 = SeenStore(str(tmp_path / "s1.json"))
     d_sent = run_radar(cfg, radar_cfg, seen1, dry_run=False, limit=None,
                        when=date(2026, 6, 19), scorer=scorer,
-                       notion_writer=MagicMock(), slack_post=lambda u, d: True)
+                       notion_writer=MagicMock(), slack_post=lambda u, d: True,
+                       no_deepdive=True)
     assert d_sent.slack_status == "sent"
 
     # 送信失敗 → "failed"
     seen2 = SeenStore(str(tmp_path / "s2.json"))
     d_failed = run_radar(cfg, radar_cfg, seen2, dry_run=False, limit=None,
                          when=date(2026, 6, 19), scorer=scorer,
-                         notion_writer=MagicMock(), slack_post=lambda u, d: False)
+                         notion_writer=MagicMock(), slack_post=lambda u, d: False,
+                         no_deepdive=True)
     assert d_failed.slack_status == "failed"
 
     # webhook 未設定 → "skipped"
@@ -130,5 +159,6 @@ def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
     seen3 = SeenStore(str(tmp_path / "s3.json"))
     d_skip = run_radar(cfg_no_hook, radar_cfg, seen3, dry_run=False, limit=None,
                        when=date(2026, 6, 19), scorer=scorer,
-                       notion_writer=MagicMock(), slack_post=lambda u, d: True)
+                       notion_writer=MagicMock(), slack_post=lambda u, d: True,
+                       no_deepdive=True)
     assert d_skip.slack_status == "skipped"
