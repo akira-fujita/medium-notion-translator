@@ -15,6 +15,17 @@ def test_headings_paragraph_bullet_code():
     assert "code" in t
 
 
+def test_code_fence_language_normalized():
+    """別名/未対応の言語タグは Notion が受け付ける値に正規化（無効は plain text）"""
+    blocks = markdown_to_blocks("```ts\nconst x = 1;\n```")
+    code = [b for b in blocks if b["type"] == "code"][0]
+    assert code["code"]["language"] == "typescript"  # ts → typescript
+
+    blocks2 = markdown_to_blocks("```madeuplang\nx\n```")
+    code2 = [b for b in blocks2 if b["type"] == "code"][0]
+    assert code2["code"]["language"] == "plain text"  # 未知 → plain text
+
+
 def test_long_paragraph_split_under_2000_and_inline_bold():
     para = "本文。" * 800  # 2400字超
     blocks = markdown_to_blocks(para + "\n\nこれは **重要** な点です。")

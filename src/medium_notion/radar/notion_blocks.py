@@ -9,6 +9,8 @@ notion_client.py の本文変換と同等の責務だが、あちらは Translat
 
 import re
 
+from ..notion_client import _normalize_code_language
+
 MAX_BLOCK_TEXT_LENGTH = 2000
 
 
@@ -114,7 +116,8 @@ def markdown_to_blocks(content: str) -> list[dict]:
         elif para.startswith("```"):
             lines = para.split("\n")
             first = lines[0].lstrip("`").strip()
-            language = first or "plain text"
+            # Notion は固定の language enum のみ受け付ける。別名/未対応は正規化（無効は plain text）
+            language = _normalize_code_language(first or "plain text")
             body = lines[1:-1] if len(lines) > 1 and lines[-1].strip() == "```" else lines[1:]
             for chunk in _split_text("\n".join(body)):
                 blocks.append(_code(chunk, language))
