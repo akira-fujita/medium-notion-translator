@@ -61,6 +61,18 @@ fi
     echo "===== $(date '+%Y-%m-%d %H:%M:%S') radar launchd 起動 ====="
 } >> "${LOG_FILE}"
 
+# ネットワーク（DNS）準備待ち — スリープ復帰直後は DNS が未準備で
+# Notion/Slack/Claude への接続が全滅することがある（[Errno 8] getaddrinfo 失敗）。
+# api.notion.com が解決できるまで最大 120 秒待ってから本処理に入る。
+PY_BIN="${PROJECT_DIR}/.venv/bin/python"
+for i in $(seq 1 24); do
+    if "${PY_BIN}" -c "import socket; socket.gethostbyname('api.notion.com')" 2>/dev/null; then
+        break
+    fi
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: ネットワーク準備待ち (${i}/24)" >> "${LOG_FILE}"
+    sleep 5
+done
+
 "${VENV_BIN}" radar >> "${LOG_FILE}" 2>&1
 EXIT_CODE=$?
 
