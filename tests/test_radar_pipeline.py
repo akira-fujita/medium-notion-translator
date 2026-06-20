@@ -99,6 +99,23 @@ def test_run_radar_sets_notion_url_on_items(tmp_path, monkeypatch):
     assert digest.highlights[0].notion_url == "https://notion.so/page-1"
 
 
+def test_run_radar_applies_default_feed_limit_when_none(tmp_path, monkeypatch):
+    """--limit 未指定でも、フィード当たりにデフォルト上限を適用する（バックログ全件処理を防ぐ）"""
+    from medium_notion.radar.pipeline import DEFAULT_FEED_LIMIT
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    captured = {}
+
+    def fake_fetch(self, limit=None):
+        captured["limit"] = limit
+        return []
+
+    monkeypatch.setattr("medium_notion.radar.pipeline.RssSource.fetch", fake_fetch)
+    run_radar(_cfg(), radar_cfg, seen, dry_run=True, limit=None,
+              when=date(2026, 6, 19), scorer=MagicMock())
+    assert captured["limit"] == DEFAULT_FEED_LIMIT
+
+
 def test_run_radar_deepdives_highlights_only_capped(tmp_path, monkeypatch):
     from medium_notion.radar.models import DeepDive
     radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")],
