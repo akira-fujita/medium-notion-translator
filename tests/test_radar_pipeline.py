@@ -142,6 +142,33 @@ def test_run_radar_deepdives_highlights_only_capped(tmp_path, monkeypatch):
     assert diver.analyze.call_count == 2
 
 
+def test_run_radar_marks_seen_only_successfully_written(tmp_path, monkeypatch):
+    """Notion 書き込みに失敗した記事は既読にしない（次回リトライできるよう取りこぼし防止）"""
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    a = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    b = FeedItem(url="https://x/b", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [a, b]
+    )
+    scorer = MagicMock()
+    scorer.score.return_value = [ScoredItem(item=a, score=2), ScoredItem(item=b, score=2)]
+
+    # a は成功（URL 返す）、b は失敗（None）
+    notion_writer = MagicMock()
+    notion_writer.append_item.side_effect = (
+        lambda s, when: "https://notion.so/a" if s.item.url == "https://x/a" else None
+    )
+
+    run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+              when=date(2026, 6, 19), scorer=scorer, notion_writer=notion_writer,
+              slack_post=lambda u, d: True, no_deepdive=True)
+
+    # a は既読、b は未読（リトライ対象として残る）
+    remaining = seen.filter_new([a, b])
+    assert remaining == [b]
+
+
 def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
     radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
     item = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
