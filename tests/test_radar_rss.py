@@ -28,6 +28,24 @@ def test_parse_respects_limit():
     assert len(items) == 1
 
 
+def test_parse_captures_full_content_when_present():
+    """RSS の content:encoded があれば content_full に取り込む"""
+    raw = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel><title>B</title>
+      <item>
+        <title>Post</title>
+        <link>https://example.com/p/1</link>
+        <description>短い概要</description>
+        <content:encoded>これは記事の完全な本文テキストです。</content:encoded>
+      </item>
+      </channel>
+    </rss>"""
+    spec = FeedSpec(name="B", url="https://example.com/rss", layer="VC")
+    items = RssSource(spec)._parse(raw)
+    assert items[0].content_full == "これは記事の完全な本文テキストです。"
+
+
 def test_fetch_uses_timed_http_get(monkeypatch):
     """fetch はタイムアウト付き HTTP 取得を使う（feedparser.parse(url) の無限ハング回避）"""
     import medium_notion.radar.sources.rss as rss_mod
