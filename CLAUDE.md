@@ -31,8 +31,9 @@ medium-notion bookmark -l toNotion --run --gui
 medium-notion batch -f urls.txt -s 7 -i 60
 
 # Tech Radar（RSS ダイジェスト）
-medium-notion radar            # 取得→採点→Slack+Notion
+medium-notion radar            # 取得→採点→刺さる記事を深掘り→Slack+Notion
 medium-notion radar --dry-run  # 送信せず内容だけ表示
+medium-notion radar --no-deepdive  # 深掘り（全文翻訳・分析）を無効化
 bash scripts/launchd/install-radar.sh  # 毎朝7:00 自動実行を有効化
 
 # メンテナンス
@@ -59,14 +60,17 @@ src/medium_notion/
 ├── models.py           # データモデル（MediumArticle, TranslationResult, NotionPage）
 ├── slack.py            # Slack 通知（Incoming Webhook）+ radar ダイジェスト投稿
 ├── logger.py           # ロガー（loguru）
-└── radar/              # RSS Tech ダイジェスト（取得→採点→Slack+Notion）
-    ├── pipeline.py     # オーケストレーション（fetch→採点→振り分け→出力）
+└── radar/              # RSS Tech ダイジェスト（取得→採点→深掘り→Slack+Notion）
+    ├── pipeline.py     # オーケストレーション（fetch→採点→深掘り→振り分け→出力）
     ├── curator.py      # Claude 採点（関心プロファイルで 0-10）
+    ├── fulltext.py     # 本文取得（RSS全文 or trafilatura 抽出）
+    ├── deepdive.py     # 刺さる記事の全文翻訳＋分析（要約/ポイント/批判的視点）
+    ├── notion_blocks.py# マークダウン→Notion ブロック変換（深掘り本文用）
     ├── digest.py       # 振り分け & Slack レンダラ（mrkdwn エスケープ・others 上限）
-    ├── notion_writer.py# Tech Radar DB へ 1 記事=1 行 書き込み
+    ├── notion_writer.py# Tech Radar DB へ 1 記事=1 行 ＋ 深掘りをページ本文へ
     ├── state.py        # 既読ストア（radar-seen.json）
     ├── config.py       # feeds.yml / interests.yml ローダ
-    ├── models.py       # FeedItem / ScoredItem / Digest
+    ├── models.py       # FeedItem / ScoredItem / DeepDive / Digest
     └── sources/        # 取得元アダプタ（Source プロトコル）
         └── rss.py      # RSS/Atom（将来 GitHub/Reddit を追加可能）
 ```
