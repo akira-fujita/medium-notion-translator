@@ -79,9 +79,14 @@ def run_radar(
             s.deepdive = diver.analyze(s.item, fulltext)
 
     # 5. Notion 蓄積（作成ページ URL を各 ScoredItem に記録 → Slack の Notion リンク用）
+    #    書き込みに成功した記事だけ既読化する（失敗分は未読のまま次回リトライ＝取りこぼし防止）
     writer = notion_writer or RadarNotionWriter(config)
+    written_items = []
     for s in digest.highlights + digest.others:
-        s.notion_url = writer.append_item(s, when) or ""
+        url = writer.append_item(s, when)
+        s.notion_url = url or ""
+        if url:
+            written_items.append(s.item)
 
     # 6. Slack プッシュ（送信結果を digest に記録）
     webhook = config.radar_slack_webhook_url or config.slack_webhook_url
@@ -98,6 +103,6 @@ def run_radar(
     else:
         digest.slack_status = "skipped"
 
-    # 7. 既読化
-    seen.mark_seen(new_items)
+    # 7. 既読化（Notion に書けた記事のみ。失敗分は次回リトライされる）
+    seen.mark_seen(written_items)
     return digest
