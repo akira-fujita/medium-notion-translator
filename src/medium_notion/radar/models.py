@@ -14,6 +14,7 @@ class FeedItem:
     summary_raw: str = ""
     published: str | None = None
     guid: str = ""
+    content_full: str = ""  # RSS に全文があれば格納（深掘りの本文取得に使う）
 
     @property
     def key(self) -> str:
