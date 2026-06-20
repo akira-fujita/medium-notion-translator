@@ -22,6 +22,17 @@ class FeedItem:
 
 
 @dataclass
+class DeepDive:
+    """刺さる記事の深掘り結果（全文翻訳＋分析）"""
+
+    translation: str = ""  # 📝 全文翻訳（マークダウン）
+    overview: str = ""     # 📖 要約
+    key_points: str = ""   # 🎯 立場として押さえるポイント
+    critique: str = ""     # ⚠️ 批判的視点
+    fulltext_ok: bool = False  # 本文を取得できたか（False なら翻訳は空・要約のみ）
+
+
+@dataclass
 class ScoredItem:
     """Claude 採点後の記事"""
 
@@ -31,6 +42,7 @@ class ScoredItem:
     summary: str = ""
     why: str = ""
     notion_url: str = ""  # Notion に蓄積したページの URL（pipeline が書き込み後にセット）
+    deepdive: "DeepDive | None" = None  # 刺さる記事のみ pipeline がセット
 
 
 @dataclass

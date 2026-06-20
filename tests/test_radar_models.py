@@ -15,3 +15,14 @@ def test_digest_is_empty():
     assert Digest(highlights=[], others=[]).is_empty is True
     fi = FeedItem(url="u", title="t", source="s", layer="l")
     assert Digest(highlights=[ScoredItem(item=fi)], others=[]).is_empty is False
+
+
+def test_scoreditem_holds_optional_deepdive():
+    from medium_notion.radar.models import DeepDive
+    fi = FeedItem(url="u", title="t", source="s", layer="l")
+    s = ScoredItem(item=fi)
+    assert s.deepdive is None  # デフォルトは未深掘り
+    dd = DeepDive(translation="訳", overview="概要", key_points="点", critique="批判", fulltext_ok=True)
+    s.deepdive = dd
+    assert s.deepdive.translation == "訳"
+    assert s.deepdive.fulltext_ok is True
