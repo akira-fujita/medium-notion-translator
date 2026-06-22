@@ -85,6 +85,21 @@ def test_append_item_writes_deepdive_body_when_present():
     assert "批判的視点" in all_text
 
 
+def test_deepdive_body_section_order():
+    """ページ本文は 要約 → ポイント → 批判 → 全文翻訳（末尾）の順"""
+    fi = FeedItem(url="https://x/a", title="T", source="a16z", layer="VC")
+    dd = DeepDive(translation="本文の訳テキスト", overview="概要", key_points="押さえる点",
+                  critique="批判", fulltext_ok=True)
+    writer = RadarNotionWriter(_cfg())
+    blocks = writer._build_deepdive_blocks(dd, "https://x/a")
+    # 見出しテキストを順番に取り出す
+    heads = []
+    for b in blocks:
+        if b["type"] == "heading_2":
+            heads.append("".join(rt["text"]["content"] for rt in b["heading_2"]["rich_text"]))
+    assert heads == ["📖 要約", "🎯 立場として押さえるべきポイント", "⚠️ 批判的視点", "📝 全文翻訳"]
+
+
 def test_deepdive_body_batched_over_100_blocks():
     fi = FeedItem(url="https://x/a", title="T", source="a16z", layer="VC")
     # 200 段落の翻訳 → 100 ブロック上限で複数回 append される

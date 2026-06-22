@@ -60,21 +60,23 @@ class RadarNotionWriter:
 
     def _build_deepdive_blocks(self, dd: DeepDive, source_url: str) -> list[dict]:
         """深掘り結果をページ本文ブロック列に変換する。"""
+        # 並び: 📖要約 → 🎯ポイント → ⚠️批判 → 📝全文翻訳（末尾）→ 元記事リンク
+        # 分析を先に読み、全文翻訳は参照用として末尾に置く。
         blocks: list[dict] = []
         if dd.overview:
             blocks.append(_heading("📖 要約", 2))
             blocks.append(_paragraph(dd.overview))
-        if dd.fulltext_ok and dd.translation:
-            blocks.append(_heading("📝 全文翻訳", 2))
-            blocks.extend(markdown_to_blocks(dd.translation))
-        elif not dd.fulltext_ok:
-            blocks.append(_paragraph("⚠️ 全文を取得できなかったため、要約のみ掲載しています。"))
         if dd.key_points:
             blocks.append(_heading("🎯 立場として押さえるべきポイント", 2))
             blocks.append(_paragraph(dd.key_points))
         if dd.critique:
             blocks.append(_heading("⚠️ 批判的視点", 2))
             blocks.append(_paragraph(dd.critique))
+        if dd.fulltext_ok and dd.translation:
+            blocks.append(_heading("📝 全文翻訳", 2))
+            blocks.extend(markdown_to_blocks(dd.translation))
+        elif not dd.fulltext_ok:
+            blocks.append(_paragraph("⚠️ 全文を取得できなかったため、要約のみ掲載しています。"))
         if source_url:
             blocks.append({"type": "bookmark", "bookmark": {"url": source_url}})
         return blocks
