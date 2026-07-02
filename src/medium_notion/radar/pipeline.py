@@ -74,15 +74,29 @@ def run_radar(
         targets = digest.highlights[: radar_cfg.deepdive_max]
         skipped = len(digest.highlights) - len(targets)
         log.step(f"深掘り対象 {len(targets)} 件（上限 {radar_cfg.deepdive_max}, 見送り {skipped}）")
+        from .models import DeepDive
+
+        circuit_open = False
         for s in targets:
+            if circuit_open:
+                # 一度深掘りが失敗したら以降は打ち切り、失敗扱いで次回に持ち越す
+                s.deepdive = DeepDive(failed=True)
+                continue
             fulltext = fulltext_fn(s.item)
             s.deepdive = diver.analyze(s.item, fulltext)
+            if s.deepdive.failed:
+                circuit_open = True
+                log.warn("深掘り失敗を検知。以降の深掘りを中止し次回に持ち越します")
 
     # 5. Notion 蓄積（作成ページ URL を各 ScoredItem に記録 → Slack の Notion リンク用）
     #    書き込みに成功した記事だけ既読化する（失敗分は未読のまま次回リトライ＝取りこぼし防止）
     writer = notion_writer or RadarNotionWriter(config)
     written_items = []
     for s in digest.highlights + digest.others:
+        if s.deepdive is not None and s.deepdive.failed:
+            # 深掘りが失敗 → 今回は書き込みも既読化も見送り、次回 radar で再挑戦
+            log.warn(f"深掘り失敗のため今回は見送り（次回再挑戦）: {s.item.url}")
+            continue
         url = writer.append_item(s, when)
         s.notion_url = url or ""
         if url:

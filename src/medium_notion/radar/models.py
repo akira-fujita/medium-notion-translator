@@ -31,6 +31,7 @@ class DeepDive:
     key_points: str = ""   # 🎯 立場として押さえるポイント
     critique: str = ""     # ⚠️ 批判的視点
     fulltext_ok: bool = False  # 本文を取得できたか（False なら翻訳は空・要約のみ）
+    failed: bool = False   # 深掘りが失敗したか（True なら書き込み・既読化をスキップし次回再挑戦）
 
 
 @dataclass

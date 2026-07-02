@@ -206,3 +206,102 @@ def test_run_radar_slack_status_reflects_post_result(tmp_path, monkeypatch):
                        notion_writer=MagicMock(), slack_post=lambda u, d: True,
                        no_deepdive=True)
     assert d_skip.slack_status == "skipped"
+
+
+def test_run_radar_skips_write_and_seen_when_deepdive_failed(tmp_path, monkeypatch):
+    """深掘りが失敗した記事は Notion 書き込みも既読化もスキップ（次回再挑戦）"""
+    from medium_notion.radar.models import DeepDive
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")],
+                            threshold=7, deepdive_max=2)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    a = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [a]
+    )
+    scorer = MagicMock()
+    scorer.score.return_value = [ScoredItem(item=a, score=9)]
+    diver = MagicMock()
+    diver.analyze.return_value = DeepDive(failed=True)
+    notion_writer = MagicMock()
+
+    run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+              when=date(2026, 6, 19), scorer=scorer, notion_writer=notion_writer,
+              slack_post=lambda u, d: True, diver=diver, fulltext_fn=lambda it: "body")
+
+    notion_writer.append_item.assert_not_called()   # 書き込みスキップ
+    assert seen.filter_new([a]) == [a]              # 未読のまま残る
+
+
+def test_run_radar_circuit_breaker_stops_deepdive_after_failure(tmp_path, monkeypatch):
+    """深掘りが1件失敗したら以降の深掘りを打ち切り、残りも未書き込み・未読で持ち越す"""
+    from medium_notion.radar.models import DeepDive
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")],
+                            threshold=7, deepdive_max=3)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    items = [FeedItem(url=f"https://x/{i}", title="t", source="S", layer="VC")
+             for i in range(3)]
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: items
+    )
+    scorer = MagicMock()
+    scorer.score.return_value = [ScoredItem(item=it, score=9) for it in items]
+    diver = MagicMock()
+    diver.analyze.return_value = DeepDive(failed=True)
+    notion_writer = MagicMock()
+
+    run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+              when=date(2026, 6, 19), scorer=scorer, notion_writer=notion_writer,
+              slack_post=lambda u, d: True, diver=diver, fulltext_fn=lambda it: "body")
+
+    assert diver.analyze.call_count == 1            # 1件目失敗で打ち切り
+    notion_writer.append_item.assert_not_called()   # 3件とも未書き込み
+    assert seen.filter_new(items) == items          # 3件とも未読
+
+
+def test_run_radar_fatal_cli_error_aborts_without_marking_seen(tmp_path, monkeypatch):
+    """深掘りが致命エラー（CLI不在）を送出したら run を失敗させ、何も既読化しない"""
+    import pytest
+    from medium_notion.radar.deepdive import ClaudeCliNotFound
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")],
+                            threshold=7, deepdive_max=2)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    a = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [a]
+    )
+    scorer = MagicMock()
+    scorer.score.return_value = [ScoredItem(item=a, score=9)]
+    diver = MagicMock()
+    diver.analyze.side_effect = ClaudeCliNotFound("no cli")
+
+    with pytest.raises(ClaudeCliNotFound):
+        run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+                  when=date(2026, 6, 19), scorer=scorer, notion_writer=MagicMock(),
+                  slack_post=lambda u, d: True, diver=diver, fulltext_fn=lambda it: "body")
+
+    assert seen.filter_new([a]) == [a]   # 何も既読化されていない
+
+
+def test_run_radar_writes_normally_when_no_fulltext(tmp_path, monkeypatch):
+    """本文が取れないだけ（failed=False, fulltext_ok=False）は通常通り書き込む（過剰スキップ防止）"""
+    from medium_notion.radar.models import DeepDive
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")],
+                            threshold=7, deepdive_max=2)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    a = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [a]
+    )
+    scorer = MagicMock()
+    scorer.score.return_value = [ScoredItem(item=a, score=9)]
+    diver = MagicMock()
+    diver.analyze.return_value = DeepDive(overview="o", fulltext_ok=False, failed=False)
+    notion_writer = MagicMock()
+    notion_writer.append_item.return_value = "https://notion.so/a"
+
+    run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+              when=date(2026, 6, 19), scorer=scorer, notion_writer=notion_writer,
+              slack_post=lambda u, d: True, diver=diver, fulltext_fn=lambda it: None)
+
+    notion_writer.append_item.assert_called_once()   # 通常通り書き込み
+    assert seen.filter_new([a]) == []                # 既読化される
