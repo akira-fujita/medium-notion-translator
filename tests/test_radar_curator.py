@@ -67,3 +67,14 @@ def test_score_tolerates_malformed_score_values():
     assert by_url["https://x/b"].score == 0
     # 落ちずに全件返る
     assert len(scored) == 2
+
+
+def test_score_raises_fatal_when_cli_missing():
+    """Claude CLI 不在は握りつぶさず送出して run を失敗させる（score0 で全件既読化しない）"""
+    import pytest
+    from medium_notion.radar.errors import ClaudeCliNotFound
+    radar_cfg = RadarConfig(profile=["x"], threshold=7)
+    curator = Curator(_cfg())
+    with patch("medium_notion.radar.curator.subprocess.run", side_effect=FileNotFoundError()):
+        with pytest.raises(ClaudeCliNotFound):
+            curator.score(_items(), radar_cfg)

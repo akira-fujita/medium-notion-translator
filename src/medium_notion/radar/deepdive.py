@@ -10,12 +10,16 @@ import json
 import re
 import subprocess
 import textwrap
+import time
 
 from ..config import Config
 from .models import FeedItem, DeepDive
 from .. import logger as log
 
+from .errors import ClaudeCliNotFound, ClaudeTimeout  # noqa: F401 (re-export)
+
 MAX_CHUNK_SIZE = 15000
+RETRY_ATTEMPTS = 3  # 初回 + リトライ2回
 
 TRANSLATE_PROMPT = textwrap.dedent("""\
     あなたは技術記事の翻訳者です。以下の英語記事を自然な日本語に翻訳してください。
@@ -54,8 +58,32 @@ class DeepDiver:
     def __init__(self, config: Config):
         self.config = config
 
+    def _run_with_retry(self, fn):
+        """fn() を実行。transient 失敗はバックオフ再試行。致命/回復不能は即送出。"""
+        last_err = None
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            try:
+                return fn()
+            except (ClaudeCliNotFound, ClaudeTimeout):
+                raise  # リトライしない
+            except Exception as e:
+                last_err = e
+                if attempt < RETRY_ATTEMPTS:
+                    wait = 2 ** attempt  # 2, 4
+                    log.warn(
+                        f"深掘りリトライ ({attempt}/{RETRY_ATTEMPTS - 1}) — "
+                        f"{wait}秒待機: {e}"
+                    )
+                    time.sleep(wait)
+        raise last_err
+
     def analyze(self, item: FeedItem, fulltext: str | None) -> DeepDive:
-        """記事を深掘りして DeepDive を返す。Claude 失敗時は空の DeepDive。"""
+        """記事を深掘りして DeepDive を返す。
+
+        一時的な失敗はリトライ（`_run_with_retry`）で吸収する。使い切っても失敗した／
+        タイムアウトした場合は `failed=True` の DeepDive を返し、pipeline が書き込み・
+        既読化をスキップして次回に持ち越す。CLI 不在などの致命エラーは送出して run を失敗させる。
+        """
         try:
             if fulltext:
                 translation = self._translate(item.title, fulltext)
@@ -76,14 +104,17 @@ class DeepDiver:
                 critique=analysis.get("critique", ""),
                 fulltext_ok=False,
             )
+        except ClaudeCliNotFound:
+            raise  # 致命的な設定エラー → 握りつぶさず run を失敗させる
         except Exception as e:
-            log.warn(f"深掘りに失敗（行・Slack は維持）: {item.url}: {e}")
-            return DeepDive(fulltext_ok=bool(fulltext))
+            log.warn(f"深掘りに失敗（今回スキップ・次回再挑戦）: {item.url}: {e}")
+            return DeepDive(fulltext_ok=bool(fulltext), failed=True)
 
     def _translate(self, title: str, content: str) -> str:
         if len(content) > MAX_CHUNK_SIZE:
             return self._translate_chunked(title, content)
-        return self._call_claude(TRANSLATE_PROMPT.format(title=title, content=content))
+        prompt = TRANSLATE_PROMPT.format(title=title, content=content)
+        return self._run_with_retry(lambda: self._call_claude(prompt))
 
     def _translate_chunked(self, title: str, content: str) -> str:
         paragraphs = content.split("\n\n")
@@ -100,14 +131,24 @@ class DeepDiver:
         if current:
             chunks.append("\n\n".join(current))
         parts = [
-            self._call_claude(TRANSLATE_PROMPT.format(title=title, content=c))
+            self._run_with_retry(
+                lambda c=c: self._call_claude(TRANSLATE_PROMPT.format(title=title, content=c))
+            )
             for c in chunks
         ]
         return "\n\n".join(parts)
 
     def _analyze(self, title: str, content: str) -> dict:
-        raw = self._call_claude(ANALYZE_PROMPT.format(title=title, content=content[:8000]))
-        return self._parse_json(raw) or {}
+        prompt = ANALYZE_PROMPT.format(title=title, content=content[:8000])
+
+        def once() -> dict:
+            parsed = self._parse_json(self._call_claude(prompt))
+            # dict でない／必須の overview が空 → 空登録を避けるため失敗扱いでリトライ
+            if not isinstance(parsed, dict) or not parsed.get("overview"):
+                raise RuntimeError("分析 JSON が不正（空 or 必須項目欠落）です")
+            return parsed
+
+        return self._run_with_retry(once)
 
     def _parse_json(self, text: str) -> dict | None:
         m = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
@@ -140,9 +181,9 @@ class DeepDiver:
                 cmd, input=prompt, capture_output=True, text=True, timeout=600
             )
         except FileNotFoundError:
-            raise RuntimeError("Claude Code CLI が見つかりません。")
+            raise ClaudeCliNotFound("Claude Code CLI が見つかりません。")
         except subprocess.TimeoutExpired:
-            raise RuntimeError("Claude Code CLI がタイムアウトしました（10分）")
+            raise ClaudeTimeout("Claude Code CLI がタイムアウトしました（10分）")
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "出力なし").strip()[:500]
             raise RuntimeError(f"Claude Code CLI エラー (exit {proc.returncode}): {detail}")

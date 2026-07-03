@@ -7,6 +7,7 @@ import textwrap
 
 from ..config import Config
 from .config import RadarConfig
+from .errors import ClaudeCliNotFound
 from .models import FeedItem, ScoredItem
 from .. import logger as log
 
@@ -49,6 +50,8 @@ class Curator:
         try:
             raw = self._call_claude(prompt)
             scored_raw = self._parse_json_list(raw)
+        except ClaudeCliNotFound:
+            raise  # 致命的な設定エラー → 握りつぶさず run を失敗させる
         except Exception as e:
             log.warn(f"採点に失敗（素の新着を流します）: {e}")
             scored_raw = []
@@ -129,7 +132,7 @@ class Curator:
                 cmd, input=prompt, capture_output=True, text=True, timeout=600
             )
         except FileNotFoundError:
-            raise RuntimeError(
+            raise ClaudeCliNotFound(
                 "Claude Code CLI が見つかりません。\n"
                 "  → npm install -g @anthropic-ai/claude-code でインストールしてください"
             )

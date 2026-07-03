@@ -71,3 +71,25 @@ def test_radar_no_deepdive_flag_passed_through(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     assert mock_run.call_args.kwargs["no_deepdive"] is True
+
+
+def test_radar_reports_actual_written_count(tmp_path, monkeypatch):
+    """深掘り失敗でスキップが出ても、表示件数は実際に Notion に書けた件数と一致する"""
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(notion_api_key="ntn_real_key", notion_database_id="a" * 32)
+    radar_cfg = RadarConfig(threshold=7)
+    fi1 = FeedItem(url="https://x/a", title="EN", source="a16z", layer="VC")
+    fi2 = FeedItem(url="https://x/b", title="EN", source="a16z", layer="VC")
+    written = ScoredItem(item=fi1, score=9, jp_title="書けた", notion_url="https://notion.so/a")
+    skipped = ScoredItem(item=fi2, score=9, jp_title="スキップ", notion_url="")
+    digest = Digest(highlights=[written, skipped], others=[])
+    digest.slack_status = "sent"
+
+    with patch("medium_notion.cli.load_config", return_value=cfg), \
+         patch("medium_notion.cli.load_radar_config", return_value=radar_cfg), \
+         patch("medium_notion.cli.run_radar", return_value=digest):
+        result = CliRunner().invoke(cli, ["radar"])
+
+    assert result.exit_code == 0
+    assert "Notion 1件" in result.output      # 実書き込み1件
+    assert "Notion 2件" not in result.output

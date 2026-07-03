@@ -1384,13 +1384,13 @@ def radar(dry_run, limit, no_deepdive):
 
     console.print(render_slack_text(digest))
     if not dry_run:
-        total = len(digest.highlights) + len(digest.others)
+        written = sum(1 for s in digest.highlights + digest.others if s.notion_url)
         slack_msg = {
             "sent": "[green]Slack 投稿完了[/green]",
             "failed": "[red]Slack 送信失敗（logs/radar.log 参照）[/red]",
             "skipped": "[dim]Slack 未設定（スキップ）[/dim]",
         }.get(digest.slack_status, f"Slack: {digest.slack_status}")
-        console.print(f"\n[bold green]✓ Notion {total}件[/bold green] / {slack_msg}")
+        console.print(f"\n[bold green]✓ Notion {written}件[/bold green] / {slack_msg}")
 
 
 # __main__.py 用のエントリポイント
