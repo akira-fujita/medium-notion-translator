@@ -16,16 +16,10 @@ from ..config import Config
 from .models import FeedItem, DeepDive
 from .. import logger as log
 
+from .errors import ClaudeCliNotFound, ClaudeTimeout  # noqa: F401 (re-export)
+
 MAX_CHUNK_SIZE = 15000
 RETRY_ATTEMPTS = 3  # 初回 + リトライ2回
-
-
-class ClaudeCliNotFound(RuntimeError):
-    """Claude CLI 不在等の致命的な設定エラー（リトライせず run を失敗させる）"""
-
-
-class ClaudeTimeout(RuntimeError):
-    """Claude 呼び出しのタイムアウト（リトライせず、記事単位でスキップする）"""
 
 TRANSLATE_PROMPT = textwrap.dedent("""\
     あなたは技術記事の翻訳者です。以下の英語記事を自然な日本語に翻訳してください。
@@ -149,8 +143,9 @@ class DeepDiver:
 
         def once() -> dict:
             parsed = self._parse_json(self._call_claude(prompt))
-            if parsed is None:
-                raise RuntimeError("分析 JSON を解析できませんでした")
+            # dict でない／必須の overview が空 → 空登録を避けるため失敗扱いでリトライ
+            if not isinstance(parsed, dict) or not parsed.get("overview"):
+                raise RuntimeError("分析 JSON が不正（空 or 必須項目欠落）です")
             return parsed
 
         return self._run_with_retry(once)

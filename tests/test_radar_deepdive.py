@@ -105,6 +105,18 @@ def test_analyze_retries_on_malformed_json_then_succeeds():
     assert m.call_count == 3        # 翻訳1 + 分析(不正→正)2
 
 
+def test_analyze_retries_on_empty_json_object_then_succeeds():
+    diver = DeepDiver(_cfg())
+    good = '{"overview":"o","key_points":"k","critique":"c"}'
+    with patch.object(diver, "_call_claude",
+                      side_effect=["訳文", "{}", good]) as m, \
+            patch("medium_notion.radar.deepdive.time.sleep"):
+        dd = diver.analyze(_item(), fulltext="body " * 50)
+    assert dd.failed is False
+    assert dd.overview == "o"
+    assert m.call_count == 3        # 翻訳1 + 分析(空dict→正)2
+
+
 def test_analyze_reraises_fatal_cli_not_found():
     diver = DeepDiver(_cfg())
     with patch.object(diver, "_call_claude", side_effect=ClaudeCliNotFound("no cli")):

@@ -1,8 +1,8 @@
 # DeepDiver 一時エラーリトライ + 取りこぼし防止 設計書
 
 - 日付: 2026-07-03
-- 対象: `src/medium_notion/radar/deepdive.py`, `radar/models.py`, `radar/pipeline.py`, `cli.py`
-- ステータス: レビュー反映済み（codex レビュー 2026-07-03 の指摘を反映）
+- 対象: `radar/deepdive.py`, `radar/curator.py`, `radar/errors.py`, `radar/models.py`, `radar/pipeline.py`, `cli.py`
+- ステータス: 実装＋codex レビュー2巡反映済み
 - スコープ: 「リトライ + スキップ + 堅牢化」（ユーザ承認）
 
 ## 背景 / 問題
@@ -39,10 +39,21 @@ Claude 呼び出しの失敗を 3 種に分類する。
 | **回復不能・記事単位** | `TimeoutExpired`（10分×3=30分化を回避） | しない | その記事を `failed` 扱い → スキップ → 次回再挑戦 |
 | **一時的（transient）** | 非ゼロ exit（接続断含む）/ 空応答 / 分析JSON不正 | する（3回・2s→4s） | 使い切ったら `failed` 扱い → スキップ |
 
-例外型:
+例外型（`radar/errors.py` に集約し curator / deepdive で共用）:
 - `ClaudeCliNotFound(RuntimeError)` … 致命。`FileNotFoundError` を変換。
 - `ClaudeTimeout(RuntimeError)` … 回復不能・記事単位。`TimeoutExpired` を変換。
 - それ以外の `RuntimeError` … transient。
+
+**採点（curator）も同じ致命分類にそろえる**（codex レビュー2巡目 P1）:
+本番では採点（step3）が深掘りより先に走る。従来 curator は `FileNotFoundError` を
+generic に握りつぶして score0 を返し、全新着を書き込み＋既読化していた。これでは
+「CLI 不在 → run 失敗」が実質到達不能。対策: `curator._call_claude` も
+`ClaudeCliNotFound` を送出し、`score()` はこれだけ再送出（他の採点失敗は従来通り素の新着を流す）。
+
+**分析 JSON の形バリデーション**（codex レビュー2巡目 P1）:
+`_analyze` の `once()` は「dict であり `overview` が非空」を要求し、満たさなければ
+transient 失敗として送出→リトライ→使い切れば `failed`。これで `{}` や必須欠落の
+「解析はできるが空」応答が既読化されるのを防ぐ。
 
 ## 設計
 

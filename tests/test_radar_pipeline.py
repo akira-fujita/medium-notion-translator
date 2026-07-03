@@ -305,3 +305,27 @@ def test_run_radar_writes_normally_when_no_fulltext(tmp_path, monkeypatch):
 
     notion_writer.append_item.assert_called_once()   # 通常通り書き込み
     assert seen.filter_new([a]) == []                # 既読化される
+
+
+def test_run_radar_aborts_when_claude_cli_missing(tmp_path, monkeypatch):
+    """実 Curator で CLI 不在 → run 全体を失敗させ、何も既読化しない（score0 で全件焼かない）"""
+    import pytest
+    from medium_notion.radar.errors import ClaudeCliNotFound
+
+    def _no_cli(*a, **k):
+        raise FileNotFoundError()
+
+    radar_cfg = RadarConfig(feeds=[FeedSpec("S", "https://x/rss", "VC")], threshold=7)
+    seen = SeenStore(str(tmp_path / "seen.json"))
+    a = FeedItem(url="https://x/a", title="t", source="S", layer="VC")
+    monkeypatch.setattr(
+        "medium_notion.radar.pipeline.RssSource.fetch", lambda self, limit=None: [a]
+    )
+    monkeypatch.setattr("medium_notion.radar.curator.subprocess.run", _no_cli)
+
+    with pytest.raises(ClaudeCliNotFound):
+        run_radar(_cfg(), radar_cfg, seen, dry_run=False, limit=None,
+                  when=date(2026, 6, 19), notion_writer=MagicMock(),
+                  slack_post=lambda u, d: True)
+
+    assert seen.filter_new([a]) == [a]   # 何も既読化されていない
