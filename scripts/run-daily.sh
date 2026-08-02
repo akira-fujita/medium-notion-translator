@@ -44,6 +44,10 @@ trap 'rm -rf "${LOCK_DIR}" 2>/dev/null || true' EXIT
 # 優先度: ユーザーローカル (~/.local/bin の Claude Code 公式インストーラ既定) → npm-global → Homebrew → 標準
 export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 
+# Playwright のブラウザ配置先を Caches の外に固定（OS のキャッシュ削除対策）
+# shellcheck source=lib/playwright-env.sh
+. "${SCRIPT_DIR}/lib/playwright-env.sh"
+
 # Claude Code CLI が nvm 配下にある場合のフォールバック
 # nvm.sh をソースしただけでは Node バージョンは選択されないので、default を有効化する
 if [ -s "${HOME}/.nvm/nvm.sh" ]; then

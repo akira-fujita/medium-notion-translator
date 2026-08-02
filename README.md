@@ -57,6 +57,13 @@ python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -e .
+
+# Playwright のブラウザ配置先を ~/Library/Caches の外に固定してからインストールする。
+# Caches は macOS のストレージ最適化にパージされることがあり、消えると
+# 「BrowserType.launch: Executable doesn't exist」で全実行が落ちる。
+# ~/.zshrc に入れておくと、以降の手動実行・再インストールでも同じ場所を見る。
+echo 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.playwright-browsers"' >> ~/.zshrc
+export PLAYWRIGHT_BROWSERS_PATH="$HOME/.playwright-browsers"
 playwright install chromium
 
 # 3. Claude Code CLI をインストール
