@@ -64,6 +64,12 @@ green "✓ 依存パッケージをインストールしました"
 # ── Step 2: Playwright ──────────────────────────────
 step "2/6" "Playwright (Chromium) をインストール"
 
+# 配置先を Caches の外に固定（OS のキャッシュ削除対策）。
+# 起動側（run-daily.sh / ~/.zshrc）と同じ値を使う必要があるので共有スニペットから読む。
+# shellcheck source=lib/playwright-env.sh
+. "$PROJECT_DIR/scripts/lib/playwright-env.sh"
+yellow "  ブラウザ配置先: $PLAYWRIGHT_BROWSERS_PATH"
+
 if .venv/bin/playwright install --dry-run chromium &>/dev/null 2>&1; then
     .venv/bin/playwright install chromium
 else

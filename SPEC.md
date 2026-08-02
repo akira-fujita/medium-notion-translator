@@ -603,6 +603,8 @@ Medium の DOM 構造は頻繁に変わる。特定の CSS クラスや data-tes
 ```bash
 # 1. インストール
 pip install -e .
+# ブラウザ配置先は Caches の外に固定する（詳細は scripts/lib/playwright-env.sh）
+export PLAYWRIGHT_BROWSERS_PATH="$HOME/.playwright-browsers"
 playwright install chromium
 
 # 2. 設定ファイル作成
