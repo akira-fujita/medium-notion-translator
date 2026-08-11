@@ -62,6 +62,9 @@ pip install -e .
 # Caches は macOS のストレージ最適化にパージされることがあり、消えると
 # 「BrowserType.launch: Executable doesn't exist」で全実行が落ちる。
 # ~/.zshrc に入れておくと、以降の手動実行・再インストールでも同じ場所を見る。
+# なお変数が未設定でも、`~/.playwright-browsers` に展開済みのブラウザがあれば
+# アプリ側（browser.py の `_ensure_browsers_path`）が補うので、bash / launchd /
+# cron からの起動でも落ちない。ここでの export はインストール先を決めるために必要。
 echo 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.playwright-browsers"' >> ~/.zshrc
 export PLAYWRIGHT_BROWSERS_PATH="$HOME/.playwright-browsers"
 playwright install chromium

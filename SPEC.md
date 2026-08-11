@@ -194,7 +194,9 @@ https://medium.com/@user/article-2-def456
 **記事取得フロー** (`fetch_article`):
 1. セッションファイル存在チェック → なければ即 `RuntimeError`
 2. 記事ページにアクセス（`domcontentloaded` で待機）
-3. HTTP ステータスコードチェック（>= 400 でエラー）
+3. HTTP ステータスコードチェック（`_verify_response_status`）
+   - 403 / 429 / 503 かつ Cloudflare チャレンジ title の場合は即エラーにせず通過を待つ
+   - それ以外の >= 400、および通過待ちのタイムアウトは `RuntimeError`
 4. JavaScript で 404 / 無効ページ検出
 5. 記事コンテナの検出（`ARTICLE_CONTAINER_SELECTORS` を順に試行）
 6. ページスクロール（遅延ロードコンテンツのトリガー）
@@ -538,13 +540,15 @@ Cookie やローカルストレージの情報を含む。
 | チェック | タイミング | エラー |
 |---------|----------|--------|
 | セッションファイル未存在 | 記事取得前 | `RuntimeError` |
-| HTTP ステータス >= 400 | ページアクセス直後 | `RuntimeError` |
+| HTTP ステータス >= 400 | ページアクセス直後 | `RuntimeError`（403/429/503 + Cloudflare チャレンジは通過待ち後に判定） |
 | 404 / 無効ページ検出 | DOM 読み込み後 | `RuntimeError` |
 | コンテンツ抽出失敗 | DOM 走査後 | `RuntimeError`（フォールバック後） |
 
 ### 6.2 設計原則
 
 - **無効なページで Claude を呼ばない**: HTTP ステータスと DOM チェックで事前に検出
+- **待てば通るものと本当の失敗を分ける**: Cloudflare の JS チャレンジは 403 を返してから
+  JS で解決するため、ステータスだけで即断せず title で判別してから通過を待つ
 - **スタックトレースを見せない**: `RuntimeError` を CLI 層で catch して整形表示
 - **翻訳結果は捨てない**: Step 2（メタデータ）が失敗しても Step 1（翻訳本文）は保持
 - **セッション期限切れは明示的に伝える**: `login` コマンドの再実行を促す
@@ -604,6 +608,8 @@ Medium の DOM 構造は頻繁に変わる。特定の CSS クラスや data-tes
 # 1. インストール
 pip install -e .
 # ブラウザ配置先は Caches の外に固定する（詳細は scripts/lib/playwright-env.sh）
+# 変数が未設定の環境（bash / launchd / cron）でも、この場所に展開済みブラウザが
+# あればアプリ側が補完する（`browser.py: _ensure_browsers_path`）
 export PLAYWRIGHT_BROWSERS_PATH="$HOME/.playwright-browsers"
 playwright install chromium
 
