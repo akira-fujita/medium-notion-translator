@@ -46,6 +46,7 @@ medium-notion backfill-topics  # 既存記事に Topics を自動付与
 pip install -e .             # ローカルインストール
 pytest                       # テスト実行
 playwright install chromium  # ブラウザ更新（配置先は PLAYWRIGHT_BROWSERS_PATH。~/.zshrc で設定済み）
+                             # 変数未設定でも ~/.playwright-browsers があればアプリ側が補完する
 ```
 
 ## キーファイル

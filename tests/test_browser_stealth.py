@@ -1,6 +1,9 @@
 """ヘッドレスでの Cloudflare 検出 / ステルス施策のテスト"""
 
-from medium_notion.browser import _is_cloudflare_challenge
+from medium_notion.browser import (
+    _is_cloudflare_challenge,
+    _is_retryable_challenge_status,
+)
 
 
 class TestIsCloudflareChallenge:
@@ -28,3 +31,22 @@ class TestIsCloudflareChallenge:
         assert _is_cloudflare_challenge(None) is False
 
 
+class TestRetryableChallengeStatus:
+    """Cloudflare がチャレンジ配信時に返すステータスは即エラーにしない
+
+    Cloudflare の JS チャレンジは 403 を返してから JS で解決する。
+    status >= 400 で即 raise すると通過待ちのロジックに一度も到達しない。
+    """
+
+    def test_403_is_retryable(self):
+        assert _is_retryable_challenge_status(403) is True
+
+    def test_404_is_not_retryable(self):
+        # 存在しないページは待っても通らない
+        assert _is_retryable_challenge_status(404) is False
+
+    def test_other_statuses(self):
+        assert _is_retryable_challenge_status(429) is True
+        assert _is_retryable_challenge_status(503) is True
+        assert _is_retryable_challenge_status(401) is False
+        assert _is_retryable_challenge_status(500) is False

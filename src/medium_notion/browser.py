@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+from collections.abc import MutableMapping
 from pathlib import Path
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
@@ -36,6 +38,9 @@ PAYWALL_INDICATORS = [
     "subscribe to read",
 ]
 
+# Playwright のブラウザ既定配置先（~/.zshrc の PLAYWRIGHT_BROWSERS_PATH と揃える）
+DEFAULT_BROWSERS_PATH = Path.home() / ".playwright-browsers"
+
 # Cloudflare チャレンジページの title パターン
 # Cloudflare は Accept-Language に応じて文言を翻訳して返すので、日本語版も含める
 _CLOUDFLARE_TITLE_PATTERNS = (
@@ -46,6 +51,50 @@ _CLOUDFLARE_TITLE_PATTERNS = (
     "しばらくお待ちください",
     "お待ちください",
 )
+
+
+# Cloudflare がチャレンジ／レート制限で返しうるステータス。
+# これらは「待てば通る」可能性があるので、即エラーにはしない。
+_CLOUDFLARE_CHALLENGE_STATUSES = (403, 429, 503)
+
+
+def _ensure_browsers_path(
+    env: MutableMapping[str, str] | None = None,
+    candidate: Path | None = None,
+) -> str | None:
+    """`PLAYWRIGHT_BROWSERS_PATH` が未設定なら既定の配置先を環境変数に補う。
+
+    この変数は ~/.zshrc にしか書かれていないため、bash / launchd / cron から
+    起動すると空になり、Playwright が既定の `~/Library/Caches/ms-playwright`
+    （空）を見て「ブラウザ未インストール」と誤判定する。シェルに依存させない。
+
+    Returns:
+        補った場合はそのパス。何もしなかった場合は None。
+    """
+    env = os.environ if env is None else env
+    candidate = DEFAULT_BROWSERS_PATH if candidate is None else candidate
+
+    if env.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return None
+
+    if not candidate.is_dir():
+        return None
+
+    # 空のディレクトリを指定すると Playwright のエラーが実在しない場所を指して
+    # かえって分かりにくくなるので、実際に展開済みのブラウザがある時だけ補う
+    if not any(candidate.glob("chromium*")):
+        return None
+
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
+    return str(candidate)
+
+
+def _is_retryable_challenge_status(status: int) -> bool:
+    """Cloudflare がチャレンジ配信時に返しうるステータスかどうか。
+
+    True の場合は即エラーにせず、チャレンジ通過を待つ価値がある。
+    """
+    return status in _CLOUDFLARE_CHALLENGE_STATUSES
 
 
 def _is_cloudflare_challenge(title: str | None) -> bool:
@@ -105,6 +154,12 @@ class BrowserClient:
 
     async def initialize(self) -> None:
         """ブラウザを起動して初期化"""
+        # シェル (~/.zshrc) に依存せずブラウザ配置先を解決する。
+        # bash / launchd / cron からの起動では変数が空になるため。
+        resolved = _ensure_browsers_path()
+        if resolved:
+            log.step(f"Playwright ブラウザ配置先を補完: {resolved}")
+
         pw = await async_playwright().start()
         self._browser = await pw.chromium.launch(
             headless=self.config.headless,
@@ -256,10 +311,11 @@ class BrowserClient:
         response = await self._page.goto(url, wait_until="domcontentloaded")
 
         # --- 早期バリデーション: HTTP ステータスコード ---
-        if response and response.status >= 400:
-            raise RuntimeError(
-                f"ページの取得に失敗しました (HTTP {response.status})。URLが正しいか確認してください。"
-            )
+        # Cloudflare チャレンジ由来の 403 は待って通す（_verify_response_status 参照）
+        await self._verify_response_status(
+            response,
+            "ページの取得に失敗しました (HTTP {status})。URLが正しいか確認してください。",
+        )
 
         try:
             await self._page.wait_for_load_state("networkidle", timeout=30000)
@@ -677,6 +733,40 @@ class BrowserClient:
         except Exception as e:
             log.warn(f"セッション保存に失敗: {e}")
 
+    async def _verify_response_status(
+        self,
+        response,
+        error_message: str,
+        timeout_ms: int = 30_000,
+    ) -> None:
+        """goto() の応答ステータスを検証する。
+
+        Cloudflare の JS チャレンジは 403 を返してから JS で解決するため、
+        ステータスだけを見て即エラーにすると通過待ちに到達できない。
+        「チャレンジ配信のステータス」かつ「チャレンジ title」の時だけ待ち、
+        通過できなければ error_message で raise する。
+
+        Args:
+            error_message: raise 時のメッセージ。`{status}` を含めると置換される。
+        """
+        if not response or response.status < 400:
+            return
+
+        status = response.status
+
+        if _is_retryable_challenge_status(status) and self._page:
+            if _is_cloudflare_challenge(await self._page.title()):
+                log.warn(
+                    f"HTTP {status} は Cloudflare チャレンジの可能性 — 通過を待ちます"
+                )
+                if await self._wait_past_cloudflare(timeout_ms=timeout_ms):
+                    log.success(
+                        f"Cloudflare チャレンジ (HTTP {status}) を通過しました — 続行します"
+                    )
+                    return
+
+        raise RuntimeError(error_message.format(status=status))
+
     async def _wait_past_cloudflare(self, timeout_ms: int = 30_000) -> bool:
         """Cloudflare のインタースティシャル画面が出ていたら通過するまで待つ
 
@@ -766,12 +856,12 @@ class BrowserClient:
                 wait_until="domcontentloaded",
             )
 
-        if response and response.status >= 400:
-            raise RuntimeError(
-                f"ページの取得に失敗しました (HTTP {response.status})。\n"
-                "  → ログインセッションが期限切れの可能性があります。\n"
-                "  → `medium-notion login` で再ログインしてください。"
-            )
+        await self._verify_response_status(
+            response,
+            "ページの取得に失敗しました (HTTP {status})。\n"
+            "  → ログインセッションが期限切れの可能性があります。\n"
+            "  → `medium-notion login` で再ログインしてください。",
+        )
 
         try:
             await self._page.wait_for_load_state("networkidle", timeout=15000)
