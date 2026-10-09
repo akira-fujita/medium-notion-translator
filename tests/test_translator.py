@@ -47,6 +47,29 @@ class TestParseJson:
 
         assert result == data
 
+    def test_parse_json_with_unbalanced_brace_inside_string(self, mock_config):
+        """文字列リテラル内の片方だけの波括弧で崩れないこと
+
+        波括弧の深さを数えるフォールバックが文字列を考慮していないと、
+        本文中の `}` 一つでトップレベルの終わりを見失い None を返す。
+        """
+        service = TranslationService(mock_config)
+
+        data = {"summary": {"overview": "閉じ括弧 } の扱いについて述べた記事"}}
+        text = json.dumps(data, ensure_ascii=False)
+        result = service._parse_json(text)
+
+        assert result == data
+
+    def test_parse_json_with_trailing_comma(self, mock_config):
+        """末尾カンマがあってもパースできること（LLM 出力によくある崩れ）"""
+        service = TranslationService(mock_config)
+
+        text = '{"japanese_title": "テスト", "categories": ["AI",],}'
+        result = service._parse_json(text)
+
+        assert result == {"japanese_title": "テスト", "categories": ["AI"]}
+
 
 class TestExtractMetadata:
     def test_extract_metadata_with_topics(self, mock_config, sample_article):
@@ -226,3 +249,38 @@ class TestCallClaude:
 
         with pytest.raises(RuntimeError, match="Claude Code CLI が見つかりません"):
             service._call_claude("test prompt")
+
+
+class TestExtractMetadataFailureIsVisible:
+    """メタデータ抽出の失敗を沈黙させない
+
+    パース失敗時に警告も出さず空を返していたため、CLI が「✓ 完了」と表示しながら
+    タイトル・カテゴリ・Topics・要約が欠けたページを作る事故が起きた。
+    無人実行では気づけないので、必ずログに残す。
+    """
+
+    def test_warns_when_json_unparseable(self, mock_config, sample_article):
+        service = TranslationService(mock_config)
+        unparseable = "ここに JSON はありません（説明文だけ）"
+
+        with patch.object(service, "_call_claude", return_value=unparseable):
+            with patch("medium_notion.translator.log.warn") as mock_warn:
+                title, categories, summary, topics = service._extract_metadata(
+                    sample_article, [], []
+                )
+
+        assert (title, categories, summary, topics) == (None, [], None, [])
+        assert mock_warn.called, "パース失敗が警告なしで素通りしている"
+
+    def test_extract_topics_warns_when_json_unparseable(self, mock_config):
+        """extract_topics も同じ沈黙パスを持つので揃える"""
+        service = TranslationService(mock_config)
+
+        with patch.object(service, "_call_claude", return_value="JSON なし"):
+            with patch("medium_notion.translator.log.warn") as mock_warn:
+                topics = service.extract_topics(
+                    title="テスト", content="本文", existing_topics=[]
+                )
+
+        assert topics == []
+        assert mock_warn.called, "パース失敗が警告なしで素通りしている"

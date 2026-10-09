@@ -13,6 +13,81 @@ from .config import Config
 from .models import MediumArticle, TranslationResult
 from . import logger as log
 
+
+def _strip_trailing_commas(text: str) -> str:
+    """`}` / `]` の直前の余分なカンマを落とす（LLM 出力によくある崩れ）。
+
+    文字列リテラル内のカンマには触らない。
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(text):
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            continue
+
+        if ch == ",":
+            j = i + 1
+            while j < len(text) and text[j].isspace():
+                j += 1
+            if j < len(text) and text[j] in "}]":
+                continue  # 末尾カンマなので捨てる
+
+        out.append(ch)
+
+    return "".join(out)
+
+
+def _find_json_object(text: str) -> str | None:
+    """テキストから最初のトップレベル JSON オブジェクトを切り出す。
+
+    文字列リテラルの中の波括弧は数えない。本文に `}` が一つ混ざっただけで
+    トップレベルの終端を見失う（= メタデータが丸ごと空になる）のを防ぐ。
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    return None
+
 # --- Step 1: 翻訳プロンプト（マークダウン出力） ---
 TRANSLATE_PROMPT = textwrap.dedent("""\
     あなたは技術記事の翻訳者です。以下の英語記事を日本語に翻訳してください。
@@ -262,6 +337,15 @@ class TranslationService:
                     summary = str(summary_data)
 
                 return japanese_title, categories, summary, topics
+
+            # ここに来るのは JSON をパースできなかった場合。
+            # 黙って空を返すと「✓ 完了」表示のまま、タイトル・カテゴリ・
+            # Topics・要約が欠けたページが作られる（無人実行では気づけない）。
+            log.warn(
+                "メタデータ抽出に失敗: 応答から JSON を取り出せませんでした"
+                "（本文の翻訳は成功済み）\n"
+                f"  → 生応答（{len(raw)} 文字）の先頭 300 文字: {raw[:300]}"
+            )
         except Exception as e:
             log.warn(f"メタデータ抽出に失敗（翻訳は成功済み）: {e}")
 
@@ -293,26 +377,21 @@ class TranslationService:
         # ```json ブロック
         m = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group(1).strip())
-            except json.JSONDecodeError:
-                pass
+            block = m.group(1).strip()
+            for candidate in (block, _strip_trailing_commas(block)):
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    pass
 
-        # トップレベルの { } を探す
-        brace_start = text.find("{")
-        if brace_start != -1:
-            depth = 0
-            for i in range(brace_start, len(text)):
-                if text[i] == "{":
-                    depth += 1
-                elif text[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            return json.loads(text[brace_start : i + 1])
-                        except json.JSONDecodeError:
-                            pass
-                        break
+        # トップレベルの { } を探す（文字列内の波括弧は無視する）
+        candidate = _find_json_object(text)
+        if candidate:
+            for attempt in (candidate, _strip_trailing_commas(candidate)):
+                try:
+                    return json.loads(attempt)
+                except json.JSONDecodeError:
+                    pass
 
         return None
 
@@ -339,6 +418,11 @@ class TranslationService:
             data = self._parse_json(raw)
             if data:
                 return data.get("topics", [])
+
+            log.warn(
+                "Topics 抽出に失敗: 応答から JSON を取り出せませんでした\n"
+                f"  → 生応答（{len(raw)} 文字）の先頭 300 文字: {raw[:300]}"
+            )
         except Exception as e:
             log.warn(f"Topics 抽出に失敗: {e}")
 
