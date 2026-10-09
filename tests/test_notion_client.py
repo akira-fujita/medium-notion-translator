@@ -434,3 +434,112 @@ class TestBackfillMethods:
                 }
             },
         )
+
+
+class TestVisualHtml:
+    """視覚版 HTML の状態記録・アップロード・埋め込み"""
+
+    def _schema(self, notion_client, props):
+        notion_client.client.data_sources.retrieve.return_value = {
+            "title": [{"plain_text": "Medium DB"}],
+            "properties": props,
+        }
+        notion_client.check_access()
+
+    def test_mark_html_only_when_db_has_property(self, notion_client):
+        """「HTML」プロパティがある DB にだけ状態を書く（無ければ migrate-html するまで何もしない）"""
+        self._schema(notion_client, {"名前": {"type": "title"}})
+        notion_client.mark_html("page-1", "⏳生成中")
+        notion_client.client.pages.update.assert_not_called()
+
+        self._schema(notion_client, {"名前": {"type": "title"}, "HTML": {"type": "select"}})
+        notion_client.mark_html("page-1", "⏳生成中")
+        notion_client.client.pages.update.assert_called_once_with(
+            page_id="page-1", properties={"HTML": {"select": {"name": "⏳生成中"}}}
+        )
+
+    def test_ensure_html_property_is_idempotent(self, notion_client):
+        """無ければ select（⏳生成中 / ✅ / ⚠失敗）を足し、あれば何もしない"""
+        notion_client.client.data_sources.retrieve.return_value = {"properties": {"名前": {}}}
+        assert notion_client.ensure_html_property() is True
+        notion_client.client.data_sources.update.assert_called_once_with(
+            data_source_id=notion_client.database_id,
+            properties={"HTML": {"select": {"options": [
+                {"name": "⏳生成中"}, {"name": "✅"}, {"name": "⚠失敗"},
+            ]}}},
+        )
+        assert notion_client._has_html_property is True
+
+        notion_client.client.data_sources.update.reset_mock()
+        notion_client.client.data_sources.retrieve.return_value = {"properties": {"HTML": {}}}
+        assert notion_client.ensure_html_property() is False
+        notion_client.client.data_sources.update.assert_not_called()
+
+    def test_upload_html_waits_until_uploaded(self, notion_client):
+        """create → send(multipart) → status が uploaded になるまで待って ID を返す"""
+        sdk = notion_client.client
+        sdk.file_uploads.create.return_value = {"id": "fu-1"}
+        sdk.file_uploads.retrieve.side_effect = [{"status": "pending"}, {"status": "uploaded"}]
+        sleeps = []
+
+        fu = notion_client.upload_html("a.html", b"<html></html>", sleep=sleeps.append)
+
+        assert fu == "fu-1"
+        sdk.file_uploads.create.assert_called_once_with(filename="a.html", content_type="text/html")
+        sdk.file_uploads.send.assert_called_once_with(
+            file_upload_id="fu-1", file=("a.html", b"<html></html>", "text/html")
+        )
+        assert len(sleeps) == 1
+
+    def test_upload_html_gives_up(self, notion_client):
+        """failed / expired / 待ちすぎは例外（呼び出し元が ⚠失敗 にする）"""
+        sdk = notion_client.client
+        sdk.file_uploads.create.return_value = {"id": "fu-1"}
+        sdk.file_uploads.retrieve.return_value = {"status": "failed"}
+
+        with pytest.raises(RuntimeError, match="failed"):
+            notion_client.upload_html("a.html", b"x", sleep=lambda s: None)
+
+    @staticmethod
+    def _h2(block_id, text):
+        return {"id": block_id, "type": "heading_2",
+                "heading_2": {"rich_text": [{"plain_text": text}]}}
+
+    def test_embed_html_goes_right_before_summary(self, notion_client):
+        """目次 → 区切り → [HTML] → ## 要約 の位置に入れる（要約の直前 = 開いてすぐ図とクイズが見える）"""
+        sdk = notion_client.client
+        sdk.blocks.children.list.return_value = {"results": [
+            {"id": "toc", "type": "table_of_contents"},
+            {"id": "div", "type": "divider"},
+            self._h2("sum", "要約"),
+            self._h2("tr", "翻訳"),
+        ]}
+
+        notion_client.embed_html("page-1", "fu-1")
+
+        sdk.blocks.children.append.assert_called_once_with(
+            block_id="page-1",
+            after="div",
+            children=[{"object": "block", "type": "embed",
+                       "embed": {"type": "file_upload", "file_upload": {"id": "fu-1"}}}],
+        )
+
+    def test_embed_html_without_summary_goes_before_translation(self, notion_client):
+        """要約が作れなかったページ（メタデータ失敗）では ## 翻訳 の直前に入れる"""
+        sdk = notion_client.client
+        sdk.blocks.children.list.return_value = {"results": [
+            {"id": "toc", "type": "table_of_contents"},
+            {"id": "div", "type": "divider"},
+            self._h2("tr", "翻訳"),
+        ]}
+
+        notion_client.embed_html("page-1", "fu-1")
+
+        assert sdk.blocks.children.append.call_args.kwargs["after"] == "div"
+
+    def test_embed_html_without_anchor_is_an_error(self, notion_client):
+        notion_client.client.blocks.children.list.return_value = {"results": [
+            {"id": "p", "type": "paragraph"},
+        ]}
+        with pytest.raises(RuntimeError, match="要約"):
+            notion_client.embed_html("page-1", "fu-1")

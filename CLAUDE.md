@@ -18,7 +18,9 @@ EM のナレッジ蓄積パイプライン。
 2. 2ステップ翻訳方式を維持（Step1: 本文→マークダウン, Step2: メタデータ→JSON）
 3. 早期バリデーション: 無効ページで Claude CLI を呼ばない
 4. セッション必須: `medium-session.json` がなければ即 `RuntimeError`
-5. Notion ページ構成を維持: 目次 → 要約（4観点） → 翻訳本文 → 元記事リンク
+5. Notion ページ構成を維持: 目次 → 視覚版 HTML → 要約（4観点） → 翻訳本文 → 元記事リンク
+6. 視覚版 HTML は従: 失敗しても記事の登録を失敗にしない（⚠失敗 を残して先へ進む）。
+   作り方の正本は my-skills の notion-visual-primer。ここにルールを複製しない
 
 ## よく使うコマンド
 
@@ -41,6 +43,7 @@ medium-notion login          # Medium 再ログイン
 medium-notion test           # 接続テスト
 medium-notion index          # 記事インデックス再構築
 medium-notion backfill-topics  # 既存記事に Topics を自動付与
+medium-notion migrate-html   # DB に「HTML」プロパティを追加（初回だけ・冪等）
 
 # 開発
 pip install -e .             # ローカルインストール
@@ -60,6 +63,7 @@ src/medium_notion/
 ├── config.py           # 設定管理（Pydantic + .env）
 ├── models.py           # データモデル（MediumArticle, TranslationResult, NotionPage）
 ├── slack.py            # Slack 通知（Incoming Webhook）+ radar ダイジェスト投稿
+├── visual_html.py      # 視覚版 HTML（図とクイズ）の生成と要約直前への埋め込み
 ├── logger.py           # ロガー（loguru）
 └── radar/              # RSS Tech ダイジェスト（取得→採点→深掘り→Slack+Notion）
     ├── pipeline.py     # オーケストレーション（fetch→採点→深掘り→振り分け→出力）
@@ -82,6 +86,7 @@ src/medium_notion/
 NOTION_API_KEY, NOTION_DATABASE_ID（必須）
 HEADLESS, LOG_LEVEL, CLAUDE_MODEL, SLACK_WEBHOOK_URL（任意）
 RADAR_NOTION_DATABASE_ID, RADAR_SLACK_WEBHOOK_URL（radar 用・任意）
+VISUAL_HTML（false で視覚版 HTML を作らない）, VISUAL_PRIMER_DIR（任意）
 ```
 
 radar の取得元は `feeds.yml`、採点の関心軸は `interests.yml`（どちらもリポジトリルート）。

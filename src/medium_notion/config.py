@@ -21,6 +21,9 @@ class Config(BaseModel):
     slack_webhook_url: str | None = None
     radar_notion_database_id: str | None = None
     radar_slack_webhook_url: str | None = None
+    # 視覚版 HTML（図とクイズ）を要約ページに埋め込む。生成は notion-visual-primer の正本に従う
+    visual_html: bool = True
+    visual_primer_dir: Path = Path("~/.claude/skills/notion-visual-primer")
 
     @field_validator("notion_api_key")
     @classmethod
@@ -82,4 +85,8 @@ def load_config(env_path: str | None = None) -> Config:
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
         radar_notion_database_id=os.getenv("RADAR_NOTION_DATABASE_ID") or None,
         radar_slack_webhook_url=os.getenv("RADAR_SLACK_WEBHOOK_URL") or None,
+        visual_html=os.getenv("VISUAL_HTML", "true").lower() != "false",
+        visual_primer_dir=Path(
+            os.getenv("VISUAL_PRIMER_DIR") or "~/.claude/skills/notion-visual-primer"
+        ),
     )
