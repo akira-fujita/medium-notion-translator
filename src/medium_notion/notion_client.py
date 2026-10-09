@@ -1,6 +1,8 @@
 """Notion 連携 — データベースへのページ追加"""
 
 import re
+import time
+from typing import Callable
 from datetime import date, datetime
 
 from notion_client import Client as NotionSDKClient
@@ -117,6 +119,13 @@ def _normalize_code_language(language: str) -> str:
     return "plain text"
 
 
+# アップロード完了（status=uploaded）を待つ上限
+UPLOAD_WAIT_SECONDS = 60
+
+# 視覚版 HTML の状態（podcast-summary の Podcast DB と同じ選択肢）
+HTML_STATES = ("⏳生成中", "✅", "⚠失敗")
+
+
 class NotionClient:
     """Notion API を使ってデータベースにページを作成するクライアント"""
 
@@ -125,6 +134,7 @@ class NotionClient:
         self.client = NotionSDKClient(auth=config.notion_api_key)
         self.database_id = config.notion_database_id_formatted
         self._has_topics_property = False
+        self._has_html_property = False
 
     def check_access(self) -> bool:
         """データベースへのアクセス権限を確認"""
@@ -136,6 +146,7 @@ class NotionClient:
             # DB スキーマから Topics プロパティの有無を検出
             db_props = db.get("properties", {})
             self._has_topics_property = "Topics" in db_props
+            self._has_html_property = "HTML" in db_props
             log.success(f"Notion DB に接続: 「{db_title}」")
             return True
         except APIResponseError as e:
@@ -349,6 +360,92 @@ class NotionClient:
                     ]
                 }
             },
+        )
+
+    def ensure_html_property(self) -> bool:
+        """DB にプロパティ「HTML」（select）を足す。冪等で、足したら True を返す"""
+        props = self.client.data_sources.retrieve(
+            data_source_id=self.database_id
+        ).get("properties", {})
+        if "HTML" in props:
+            self._has_html_property = True
+            return False
+        self.client.data_sources.update(
+            data_source_id=self.database_id,
+            properties={"HTML": {"select": {"options": [
+                {"name": state} for state in HTML_STATES
+            ]}}},
+        )
+        self._has_html_property = True
+        return True
+
+    def upload_html(
+        self,
+        filename: str,
+        data: bytes,
+        sleep: Callable[[float], None] = time.sleep,
+        timeout: int = UPLOAD_WAIT_SECONDS,
+    ) -> str:
+        """HTML を File Upload API に上げ、status が uploaded になったら ID を返す。
+
+        send の直後はまだ pending のことがあり、その ID でブロックを作ると 400 になる
+        （pr-brief / podcast-summary と同じ待ち方）。
+        """
+        fu_id = self.client.file_uploads.create(
+            filename=filename, content_type="text/html"
+        )["id"]
+        self.client.file_uploads.send(
+            file_upload_id=fu_id, file=(filename, data, "text/html")
+        )
+        waited = 0
+        while True:
+            status = self.client.file_uploads.retrieve(file_upload_id=fu_id).get("status")
+            if status == "uploaded":
+                return fu_id
+            if status in ("failed", "expired") or waited >= timeout:
+                raise RuntimeError(
+                    f"HTML のアップロードが完了しない（status={status}, {waited}秒待機）"
+                )
+            sleep(2)
+            waited += 2
+
+    def embed_html(self, page_id: str, file_upload_id: str) -> None:
+        """アップロード済みの HTML を「## 要約」見出しの直前に入れる。
+
+        要約が無いページ（メタデータ抽出の失敗）では「## 翻訳」の直前。
+        `after` は直前のブロック（通常は目次の後の区切り線）を指す。
+        """
+        blocks = self.client.blocks.children.list(block_id=page_id).get("results", [])
+        headings = [
+            "".join(r.get("plain_text", "") for r in b["heading_2"].get("rich_text", []))
+            if b.get("type") == "heading_2" else None
+            for b in blocks
+        ]
+        for anchor in ("要約", "翻訳"):
+            if anchor in headings and headings.index(anchor) > 0:
+                after = blocks[headings.index(anchor) - 1]["id"]
+                break
+        else:
+            raise RuntimeError("HTML を入れる位置（## 要約 / ## 翻訳 見出し）が見つからない")
+        self.client.blocks.children.append(
+            block_id=page_id,
+            after=after,
+            children=[{
+                "object": "block",
+                "type": "embed",
+                "embed": {"type": "file_upload", "file_upload": {"id": file_upload_id}},
+            }],
+        )
+
+    def mark_html(self, page_id: str, state: str) -> None:
+        """視覚版 HTML の状態（⏳生成中 / ✅ / ⚠失敗）をプロパティ「HTML」に書く。
+
+        DB にプロパティが無ければ何もしない（`medium-notion migrate-html` で足す）。
+        """
+        if not self._has_html_property:
+            return
+        self.client.pages.update(
+            page_id=page_id, properties={"HTML": {"select": {"name": state}}}
         )
 
     def create_page(

@@ -60,6 +60,7 @@ EM としてのナレッジ蓄積が主目的であり、特定プロダクト�
            - Topics（検索用キーワード 8〜15個）
            - 構造化要約（4観点）
 7. Notion DB にページ作成
+7b. 視覚版 HTML（図とクイズ）を作って「## 要約」の直前に埋め込む（3.8 節。失敗しても 8 へ進む）
 8. インデックスに新記事を追加・保存
 9. 結果表示
 ```
@@ -84,6 +85,7 @@ medium-notion-translator/
 │       ├── config.py           # 設定管理（Pydantic + dotenv）
 │       ├── models.py           # データモデル定義
 │       ├── slack.py            # Slack 通知（Incoming Webhook）
+│       ├── visual_html.py      # 視覚版 HTML の生成と埋め込み（3.8 節）
 │       └── logger.py           # ロガー（loguru）
 └── tests/
 ```
@@ -339,6 +341,7 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 | `Categories` | multi_select | 自動分類カテゴリ |
 | `Topics` | multi_select | 検索用キーワード（8〜15個、自動抽出） |
 | `Score` | number | ユーザー指定スコア（1-10、任意） |
+| `HTML` | select | 視覚版 HTML の状態（⏳生成中 / ✅ / ⚠失敗）。`migrate-html` で追加。無ければ書かない |
 
 **ページ本文の構造**:
 
@@ -347,6 +350,8 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 │ 📑 目次（table_of_contents）         │  ← 先頭
 ├─────────────────────────────────────┤
 │ ── 区切り線 ──                       │
+├─────────────────────────────────────┤
+│ 🖼 視覚版 HTML（embed・図とクイズ）   │  ← 作成後に挿入（3.8 節）
 ├─────────────────────────────────────┤
 │ ## 要約                              │
 │   ### 📖 概要                        │
@@ -407,6 +412,12 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 - `create date` の降順でソート
 - タイトルとカテゴリを返す
 
+**視覚版 HTML** (`upload_html` / `embed_html` / `mark_html` / `ensure_html_property`):
+- `upload_html`: File Upload API に上げ、status が `uploaded` になるまで待って ID を返す（最大 60 秒）
+- `embed_html`: 「## 要約」見出しの直前（要約が無ければ「## 翻訳」の直前）に `embed`(file_upload) ブロックを `after` 指定で入れる
+- `mark_html`: プロパティ `HTML` に状態を書く。DB にプロパティが無ければ何もしない
+- `ensure_html_property`: `HTML` select を DB に足す（冪等。`medium-notion migrate-html`）
+
 ### 3.5 config.py — 設定管理
 
 **技術**: Pydantic BaseModel + python-dotenv
@@ -430,6 +441,28 @@ Frontend, Backend, Mobile, Data, Design, Career, Other
 - `NOTION_API_KEY`: 空文字・プレースホルダ（`ntn_your`）を拒否
 - `NOTION_DATABASE_ID`: 空文字・プレースホルダ（`your_`）を拒否、ハイフン自動除去
 - Database ID は API 呼び出し時にハイフン付き UUID 形式に自動変換
+
+### 3.8 visual_html.py — 視覚版 HTML（図とクイズ）
+
+podcast-summary の手順5b と同じく、作った要約ページには毎回、図が主役の単体 HTML と確認クイズを埋め込む。
+HTML の作り方は my-skills の `notion-visual-primer`（無人モード）が正本で、実行時に
+`VISUAL_PRIMER_DIR`（既定 `~/.claude/skills/notion-visual-primer`）から `SKILL.md` /
+`references/html-contract.md` / `references/unattended-mode.md` を読み込んでプロンプトに入れる。
+
+**流れ** (`attach_visual_html`):
+1. `HTML` = ⏳生成中
+2. `build_prompt`: スキルの正本 + 手元の翻訳結果（タイトル・要約・翻訳本文・元記事 URL・Notion URL）
+3. `claude -p`（翻訳と同じ `_call_claude`。ツールは使わせず標準出力で HTML を受け取る）
+4. `extract_html`: `<!DOCTYPE html>`〜`</html>` を取り出す。`FAILED: 理由` / 文書が無い / `</html>` が無い / `理解チェック` 節が無い・畳んだ答え（`<details>`）が 3 問未満 → 失敗（図は CSS で組むこともあるので数えない）
+5. `~/.local/state/medium-html/YYYY-MM-DD-<page_id 先頭8桁>-<slug>.html` に保存（成否に関わらず残す）
+6. アップロード → 「## 要約」の直前に埋め込み → `HTML` = ✅
+
+**失敗の扱い**: HTML は従。例外は外に出さず `HTML` = ⚠失敗 にして `HtmlOutcome(ok=False, reason)` を返す。
+記事は成功扱いのまま（インデックス追加・リスト削除も通常どおり）。`VISUAL_HTML=false` で無効化。
+
+**なぜ podcast-summary のように `claude --bg` でスキルを動かさないか**: podcast はページを Notion から
+読み直すために Bash（curl）が要るが、headless でツールを使うと固まる事象があった。こちらは翻訳結果が
+手元にあるので、ツール不要の `claude -p` で足りる。
 
 ### 3.6 models.py — データモデル
 
@@ -602,6 +635,7 @@ Medium の DOM 構造は頻繁に変わる。特定の CSS クラスや data-tes
 | `Categories` | Multi-select | 自動（AI 分類） |
 | `Topics` | Multi-select | 自動（検索用キーワード 8〜15個） |
 | `Score` | Number | 手動（`-s` オプション） |
+| `HTML` | Select | 自動（視覚版 HTML の状態。任意。`medium-notion migrate-html` で追加） |
 
 ---
 
@@ -698,7 +732,7 @@ medium-notion login
 2. **2 ステップ方式を維持**: 翻訳とメタデータ抽出は分離したまま
 3. **早期バリデーション優先**: 無効な入力で Claude を呼ばない
 4. **セッション必須を維持**: Medium 有料会員前提
-5. **Notion ページの視認性**: 目次 → 要約（4観点） → 本文 → 元記事リンクの構成を維持
+5. **Notion ページの視認性**: 目次 → 視覚版 HTML → 要約（4観点） → 本文 → 元記事リンクの構成を維持
 6. **ローカルインデックス**: 毎回 Notion DB をクエリしない
 
 ---
@@ -711,6 +745,8 @@ NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 HEADLESS=false
 LOG_LEVEL=INFO
 CLAUDE_MODEL=sonnet
+# VISUAL_HTML=false                 # 視覚版 HTML を作らない（既定は作る）
+# VISUAL_PRIMER_DIR=~/.claude/skills/notion-visual-primer
 ```
 
 ## 付録 B: 要約プロンプトの観点

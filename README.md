@@ -9,6 +9,7 @@ Medium の英語技術記事を日本語に翻訳し、構造化された要約�
 - EM 向け構造化要約（概要 / 学び / 活用方法 / 他記事との関連）
 - カテゴリの自動分類とタイトルの日英併記
 - Notion ページに目次・要約コールアウト・翻訳本文・元記事リンクを自動構成
+- 図とクイズの「視覚版 HTML」を要約の直前に自動で埋め込み（podcast-summary と同じ notion-visual-primer の作法）
 
 ## アーキテクチャ
 
@@ -21,6 +22,8 @@ Medium 記事 URL
     ↓    Step 2: タイトル翻訳 + カテゴリ + Topics + 構造化要約（JSON 出力）
     ↓  Notion API
 Notion DB に新規ページ作成（目次 → 要約 → 翻訳 → 元記事リンク）
+    ↓  Claude Code CLI（notion-visual-primer の正本に従って HTML を生成）
+「## 要約」の直前に視覚版 HTML を埋め込み（失敗しても記事の登録は成功のまま）
     ↓
 article-index.json に記事を追加（次回の「他記事との関連」分析用）
 ```
@@ -298,6 +301,18 @@ tail -f logs/radar.log
 launchctl unload ~/Library/LaunchAgents/com.akira.tech-radar.plist
 ```
 
+### 視覚版 HTML（図とクイズ）
+
+翻訳ページを作るたびに、図が主役の単体 HTML と確認クイズを作って「## 要約」の直前に埋め込みます
+（`translate` / `batch` / `bookmark --run`。Dock アプリ・launchd の日次実行も同じ）。
+podcast-summary の要約ページと同じく、作り方は my-skills の `notion-visual-primer`（無人モード）が正本で、
+実行時に `~/.claude/skills/notion-visual-primer` から読み込みます。
+
+- 記事ごとに Claude の呼び出しが 1 回増えます（数分）
+- 失敗しても記事の登録は成功のままです。HTML は `~/.local/state/medium-html/` にも残ります
+- 初回だけ `medium-notion migrate-html` で DB に「HTML」プロパティを足すと、⚠失敗 の記事を DB で絞り込めます
+- 止めたいときは `.env` に `VISUAL_HTML=false`
+
 ### その他のコマンド
 
 ```bash
@@ -329,6 +344,7 @@ medium-notion -h
 | Topics | Multi-select | 検索用キーワード 8〜15個（自動） |
 | Score | Number | 記事のスコア 1-10（`-s` で手動指定） |
 | create date | Date | ページ作成日（翻訳実行日、自動） |
+| HTML | Select | 視覚版 HTML の状態 ⏳生成中 / ✅ / ⚠失敗（任意・自動。`medium-notion migrate-html` で追加） |
 
 ## Notion ページの構成
 
@@ -337,6 +353,7 @@ medium-notion -h
 ```
 📑 目次（見出しから自動生成）
 ──────────
+🖼 視覚版 HTML（図とクイズ。ページ作成後に挿入）
 ## 要約
   📖 概要          ← コールアウトブロック
   💡 学び・新規性
@@ -358,6 +375,8 @@ HEADLESS=false
 LOG_LEVEL=INFO
 CLAUDE_MODEL=sonnet
 # SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+# VISUAL_HTML=false   # 視覚版 HTML を作らない（既定は作る）
+# VISUAL_PRIMER_DIR=~/.claude/skills/notion-visual-primer
 ```
 
 ## 仕様書

@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -16,6 +17,7 @@ from .config import Config, load_config
 from .browser import BrowserClient
 from .translator import TranslationService
 from .notion_client import NotionClient
+from .visual_html import attach_visual_html
 from .radar.config import load_radar_config
 from .radar.state import SeenStore
 from .radar.pipeline import run_radar
@@ -234,12 +236,33 @@ async def _translate(url: str, score: int | None, headless: bool | None):
 
     # 7. Notion に追加
     page = notion.create_page(result, score=score)
+    _attach_html(config, notion, translator, result, page)
 
     # 8. インデックスに新記事を追加して保存
     _append_to_index(config, result)
 
     # 9. 結果表示
     _show_result(result, page)
+
+
+def _attach_html(config: Config, notion, translator, result, page):
+    """作ったページに視覚版 HTML（図とクイズ）を付ける。失敗しても記事は成功のまま"""
+    if not config.visual_html:
+        return None
+    console.print("  [dim]視覚版 HTML を作成中...[/dim]")
+    outcome = attach_visual_html(
+        notion,
+        translator._call_claude,
+        result,
+        page,
+        primer_dir=config.visual_primer_dir,
+    )
+    if outcome.ok:
+        console.print(f"  [green]✓ 視覚版 HTML を埋め込みました[/green] [dim]{escape(str(outcome.path))}[/dim]")
+    else:
+        # 理由は Claude の出力や例外文。マークアップとして解釈させない（閉じタグだけで MarkupError になる）
+        console.print(f"  [yellow]⚠ 視覚版 HTML は失敗（記事は登録済み）: {escape(outcome.reason)}[/yellow]")
+    return outcome
 
 
 def _show_result(result, page):
@@ -448,6 +471,7 @@ async def _batch_translate(
 
                 # Notion に追加
                 page = notion.create_page(result, score=score)
+                _attach_html(config, notion, translator, result, page)
 
                 # インデックスにメモリ上で追加
                 existing_articles.append({
@@ -845,6 +869,7 @@ async def _bookmark_run(
 
                     # Notion に追加
                     page = notion.create_page(result, score=score)
+                    _attach_html(config, notion, translator, result, page)
 
                     # インデックスにメモリ上で追加
                     existing_articles.append({
@@ -991,6 +1016,33 @@ def _shorten_url(url: str, max_len: int = 60) -> str:
     if len(url) <= max_len:
         return url
     return url[:max_len - 3] + "..."
+
+
+@cli.command("migrate-html", context_settings=CONTEXT_SETTINGS)
+def migrate_html():
+    """Notion DB に「HTML」プロパティを追加する（初回だけ。何度実行しても安全）。
+
+    視覚版 HTML の状態（⏳生成中 / ✅ / ⚠失敗）を記録する select プロパティ。
+    無くても HTML の埋め込みはするが、失敗した記事を DB で絞り込めない。
+
+    \b
+    例:
+      medium-notion migrate-html
+    """
+    try:
+        config = load_config()
+    except ValidationError as e:
+        console.print(f"[red]設定エラー:[/red] {e}")
+        sys.exit(1)
+
+    notion = NotionClient(config)
+    if not notion.check_access():
+        sys.exit(1)
+
+    if notion.ensure_html_property():
+        console.print("[green]✓ プロパティ「HTML」を追加しました[/green]")
+    else:
+        console.print("プロパティ「HTML」は既にあります（変更なし）")
 
 
 @cli.command("backfill-topics", context_settings=CONTEXT_SETTINGS)
